@@ -87,6 +87,21 @@ const config = Object.freeze({
     doctrinePath: env.BRAIN_DOCTRINE_PATH || './src/doctrine/om-doctrine-0001.md',
     embeddingDim: num(env.BRAIN_EMBEDDING_DIM, 768),
   },
+
+  omstudio: {
+    // Governed ecosystem config (Annex A §G). The base URL targets the .242
+    // OMStudio edge / omstudio-embed front — NOT an internal port. Placeholder
+    // default; the team must confirm the live governance route.
+    governanceBaseUrl:
+      env.OMSTUDIO_GOVERNANCE_BASE_URL || 'https://omstudio.orthodoxmetrics.com/omstudio-embed',
+    // The NAME of the service-token env var is documented; the VALUE is on the
+    // never-log list and must never be logged/emitted.
+    serviceTokenVarName: 'OMSTUDIO_SERVICE_TOKEN',
+    serviceToken: env.OMSTUDIO_SERVICE_TOKEN || '',
+    // 'dryrun' (default, offline outbox) | 'http' (live; ASSUMED contract).
+    transport: (env.OMSTUDIO_TRANSPORT || 'dryrun').toLowerCase() === 'http' ? 'http' : 'dryrun',
+    outboxDir: env.OMSTUDIO_OUTBOX_DIR || './data/omstudio-outbox',
+  },
 });
 
 module.exports = { config };

@@ -157,15 +157,24 @@ om-brain/
 │   ├── adapters/                  # eventAdapter, inventoryAdapter, logAdapter (read-only)
 │   ├── memory/                    # db.js, vectorStore.js, systemTruthSeed.js
 │   ├── ai/                        # client.js, circuitBreaker.js, redactor.js
-│   ├── governance/ruleEngine.js   # DETERMINISTIC authority gates
+│   ├── governance/
+│   │   ├── ruleEngine.js          # DETERMINISTIC authority gates
+│   │   ├── approvalStateMachine.js# DETERMINISTIC approval lifecycle
+│   │   ├── omstudioClient.js      # OMStudio audit+approval adapter (ASSUMED HTTP + dry-run)
+│   │   └── governanceManager.js   # audit every decision; route approvals; ingest status
 │   ├── orchestrator/orchestrator.js
-│   ├── api/server.js              # read/observe HTTP API
+│   ├── api/server.js              # read/observe HTTP API + /governance/* surface
 │   └── util/logger.js             # redaction-enforcing logger
+├── docs/
+│   └── OMSTUDIO-INTEGRATION.md    # adapter interface, assumed payloads, webhook, state machine
 ├── test/                          # node:test unit + integration tests
 │   ├── redactor.test.js
 │   ├── ruleEngine.test.js
 │   ├── circuitBreaker.test.js
-│   └── orchestrator.test.js
+│   ├── orchestrator.test.js
+│   ├── approvalStateMachine.test.js
+│   ├── omstudioClient.test.js
+│   └── governanceFlow.test.js
 └── deploy/                        # auth01 runbook
     ├── om-brain.slice             # hard MemoryMax / CPUQuota isolation
     ├── om-brain.service           # hardened unit, LAN-only egress, service user
@@ -212,8 +221,76 @@ curl -s http://127.0.0.1:8390/decisions | jq .
 | --- | --- | --- |
 | GET | `/health` | liveness, posture, memory backend, circuit-breaker verdict |
 | GET | `/audit/findings?limit=N` | recent ingested (redacted) events |
-| POST | `/diagnose` | analyze an incident/proposal → deterministic classification + explanation + recommendation + verification steps; writes a ledger entry; `executed` is always `false` |
+| POST | `/diagnose` | analyze an incident/proposal → deterministic classification + explanation + recommendation + verification steps; writes a ledger entry; audits to OMStudio; routes human-only/Tier 0 to an approval request; `executed` is always `false` |
 | GET | `/decisions?limit=N` | the append-only decision ledger |
+| GET | `/governance/approvals?limit=N` | approval requests + current state |
+| GET | `/governance/approvals/:id` | approval detail incl. redacted append-only history |
+| POST | `/governance/approvals/:id/ingest-status` | apply an **externally-sourced** OMStudio status (live webhook target; `dryrun_sim` for tests). Cannot be used by the Brain to self-approve |
+| GET | `/governance/audit?limit=N` | recent audit events emitted to OMStudio (local mirror) |
+
+---
+
+## 5a. OMStudio Governance Integration
+
+The Brain surfaces its outputs to the OMStudio governance surface for **audit**
+and routes human-only / Tier 0 proposals for **superadmin approval**. This
+completes the "integrated into OMStudio governance surfaces" clause of the
+Phase 1 definition-of-done. Full detail is in
+[`docs/OMSTUDIO-INTEGRATION.md`](docs/OMSTUDIO-INTEGRATION.md).
+
+**Audit vs. approval.** *Every* decision emits an AUDIT event (mirroring
+`decision_memory`, also stored locally in the append-only `omstudio_audit`
+table). Only `requires_human_superadmin` (human-only domains) and
+`tier0_halt_escalate` additionally open an APPROVAL request. Auto-safe
+recommendations are audited but open **no** approval request; `executed` stays
+`false`.
+
+**Approval lifecycle (deterministic state machine).**
+`PENDING_SUBMISSION → SUBMITTED → (APPROVED | REJECTED | EXPIRED | WITHDRAWN)`.
+The Brain creates a request and submits it (`→ SUBMITTED`) but **never**
+self-approves: `APPROVED`/`REJECTED`/`EXPIRED` can be set **only** by ingesting
+an externally-sourced OMStudio status (or, in dry-run, an explicitly
+operator-simulated `dryrun_sim` input). This is enforced in pure code
+(`src/governance/approvalStateMachine.js`), not by the model. Status history is
+append-only.
+
+**ASSUMED interface caveat.** The exact OMStudio audit/approval REST contract is
+**not** in the provided corpus. The HTTP paths and payload shapes are an
+**ASSUMED** interface isolated behind a swappable adapter
+(`src/governance/omstudioClient.js`); the team **must confirm/adjust them against
+the live OMStudio API** before enabling `OMSTUDIO_TRANSPORT=http`.
+
+**Env vars** (see `.env.example`; governed ecosystem config):
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `OMSTUDIO_GOVERNANCE_BASE_URL` | `.242` edge / omstudio-embed placeholder | governance surface base URL (use the **LAN** address for `http` in prod) |
+| `OMSTUDIO_SERVICE_TOKEN` | empty | governed token; bearer header only; **never-log** |
+| `OMSTUDIO_TRANSPORT` | `dryrun` | `dryrun` (offline outbox) or `http` (live; assumed contract) |
+| `OMSTUDIO_OUTBOX_DIR` | `./data/omstudio-outbox` | dry-run outbox directory |
+
+**Dry-run vs http.** `dryrun` (default) writes each outbound record to the
+outbox as JSON — no network call — so the whole flow is testable without a live
+OMStudio. `http` POSTs to the assumed endpoints and is subject to the **circuit
+breaker** (LAN/RFC1918 hosts only; external hosts refused). **Every** outbound
+payload passes through the redactor first, so no never-log secret (incl.
+`OMSTUDIO_SERVICE_TOKEN`) or tenant identifier (`church_id` / `om_church_*`) is
+ever transmitted.
+
+**Try it (dry-run):**
+
+```bash
+npm start
+curl -s -X POST http://127.0.0.1:8390/diagnose -H 'Content-Type: application/json' \
+  -d '{"incident":{"summary":"add nginx route"},"proposal":{"description":"add nginx location proxy_pass"}}' | jq '.requires_human_superadmin_approval, .omstudio'
+curl -s http://127.0.0.1:8390/governance/approvals | jq .
+curl -s http://127.0.0.1:8390/governance/audit | jq '.count'
+# simulate an OMStudio superadmin APPROVED decision (test-only source):
+curl -s -X POST http://127.0.0.1:8390/governance/approvals/1/ingest-status \
+  -H 'Content-Type: application/json' \
+  -d '{"decision":"approved","source":"dryrun_sim"}' | jq .
+ls data/omstudio-outbox/   # outbound records
+```
 
 ---
 
@@ -281,8 +358,13 @@ the native toolchain is unavailable:
   clients are loaded lazily so unit tests and the governance core run even if a
   network client is unavailable.
 
-No code path ever reaches an external LLM: the circuit breaker refuses non-LAN
-hosts, and inference failure escalates rather than re-routes.
+The OMStudio governance client uses the built-in global `fetch` (Node ≥ 18) for
+its `http` transport — no new dependency — and is injectable for tests. In the
+default `dryrun` mode it makes no network call at all.
+
+No code path ever reaches an external LLM or external OMStudio host: the circuit
+breaker refuses non-LAN hosts for both the LLM and the OMStudio surface, and
+inference failure escalates rather than re-routes.
 
 ---
 
@@ -307,7 +389,12 @@ documented here:
 6. **Linked to governance.** Every run writes a `decision_memory` ledger entry
    citing the specific doctrine rule; human-only proposals are marked
    `requires human superadmin approval via OMStudio`. The auth01 deploy is to be
-   logged to OMStudio as an audit entry. ✔
+   logged to OMStudio as an audit entry. **Integrated into OMStudio governance
+   surfaces:** every decision now emits an OMStudio AUDIT event (mirrored in the
+   append-only `omstudio_audit` table), and human-only / Tier 0 proposals open a
+   `SUBMITTED` OMStudio APPROVAL request via a deterministic state machine in
+   which the Brain can never self-approve (see §5a and
+   `docs/OMSTUDIO-INTEGRATION.md`). ✔
 7. **Required approvals granted.** The superadmin co-location approval (§1) is
    the recorded governing precondition. ✔
 8. **A reusable workflow exists.** `deploy/deploy.sh` + `deploy/teardown.sh` +

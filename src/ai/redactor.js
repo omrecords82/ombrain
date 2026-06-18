@@ -31,6 +31,7 @@ const SECRET_KEY_PATTERNS = [
   /github_webhook_secret/i,
   /gh_token/i,
   /omstudio_service_token/i,
+  /omstudio[_-]?token/i,
   /om_build_event_token/i,
   /smtp_password/i,
   /lob_api_key/i,

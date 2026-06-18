@@ -12,6 +12,8 @@ const { config } = require('./config');
 const { MemoryDB } = require('./memory/db');
 const { BrainAIClient } = require('./ai/client');
 const { Orchestrator } = require('./orchestrator/orchestrator');
+const { OmstudioClient } = require('./governance/omstudioClient');
+const { GovernanceManager } = require('./governance/governanceManager');
 const { EventAdapter } = require('./adapters/eventAdapter');
 const { InventoryAdapter } = require('./adapters/inventoryAdapter');
 const { LogAdapter } = require('./adapters/logAdapter');
@@ -28,7 +30,21 @@ function main() {
   logger.info('memory_backend', { backend: db.backendName() });
 
   const aiClient = new BrainAIClient();
-  const orchestrator = new Orchestrator({ db, aiClient });
+
+  // OMStudio governance surface (audit + approval). Defaults to dry-run so the
+  // Brain runs safely with no live OMStudio. The base URL is LAN-only enforced
+  // by the circuit breaker inside the client when transport=http.
+  const omstudio = new OmstudioClient({
+    baseUrl: config.omstudio.governanceBaseUrl,
+    serviceToken: config.omstudio.serviceToken,
+    transport: config.omstudio.transport,
+    outboxDir: config.omstudio.outboxDir,
+    production: config.isProduction,
+  });
+  const governance = new GovernanceManager({ db, omstudio });
+  logger.info('omstudio_governance', { transport: config.omstudio.transport });
+
+  const orchestrator = new Orchestrator({ db, aiClient, governance });
 
   // Read-only ingestion adapters (disabled by default via env).
   const eventAdapter = new EventAdapter({ db });
@@ -38,7 +54,7 @@ function main() {
   inventoryAdapter.start();
   logAdapter.start();
 
-  const app = createServer({ db, orchestrator });
+  const app = createServer({ db, orchestrator, governance });
   const server = app.listen(config.http.port, config.http.host, () => {
     logger.info('http_listening', { host: config.http.host, port: config.http.port });
   });

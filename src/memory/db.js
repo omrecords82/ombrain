@@ -96,7 +96,10 @@ class MemoryDB {
       event_memory: [],
       work_memory: [],
       decision_memory: [],
-      _seq: { doctrine: 0, systruth: 0, event: 0, work: 0, decision: 0 },
+      approval_requests: [],
+      approval_status_history: [],
+      omstudio_audit: [],
+      _seq: { doctrine: 0, systruth: 0, event: 0, work: 0, decision: 0, approval: 0, apphist: 0, omaudit: 0 },
     };
     if (fs.existsSync(this.dbPath + '.json')) {
       try {
@@ -320,6 +323,147 @@ class MemoryDB {
       return this.sqlite.prepare('SELECT * FROM decision_memory ORDER BY id DESC LIMIT ?').all(limit);
     }
     return this.json.decision_memory.slice(-limit).reverse();
+  }
+
+  // -------------------------------------------------------------------------
+  // OMStudio audit mirror (APPEND-ONLY)
+  // -------------------------------------------------------------------------
+  appendOmstudioAudit({ kind, source_decision_id, classification, transport, omstudio_ref, payload_json }) {
+    if (this.backend === 'sqlite') {
+      const r = this.sqlite
+        .prepare(
+          `INSERT INTO omstudio_audit (kind, source_decision_id, classification, transport, omstudio_ref, payload_json)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(kind, source_decision_id || null, classification || null, transport, omstudio_ref || null, payload_json);
+      return r.lastInsertRowid;
+    }
+    const id = ++this.json._seq.omaudit;
+    this.json.omstudio_audit.push({
+      id,
+      kind,
+      source_decision_id: source_decision_id || null,
+      classification: classification || null,
+      transport,
+      omstudio_ref: omstudio_ref || null,
+      payload_json,
+      created_at: new Date().toISOString(),
+    });
+    this._persistJson();
+    return id;
+  }
+
+  listOmstudioAudit(limit = 100) {
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare('SELECT * FROM omstudio_audit ORDER BY id DESC LIMIT ?').all(limit);
+    }
+    return this.json.omstudio_audit.slice(-limit).reverse();
+  }
+
+  // -------------------------------------------------------------------------
+  // Approval requests (create non-deletable; state advances via state machine)
+  // -------------------------------------------------------------------------
+  createApprovalRequest({ source_decision_id, session_id, classification, domains, proposal_summary, state, omstudio_ref }) {
+    if (this.backend === 'sqlite') {
+      const r = this.sqlite
+        .prepare(
+          `INSERT INTO approval_requests
+             (source_decision_id, session_id, classification, domains, proposal_summary, state, omstudio_ref)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(source_decision_id || null, session_id || null, classification, domains || null, proposal_summary, state, omstudio_ref || null);
+      const id = r.lastInsertRowid;
+      this._appendApprovalHistory({ approval_id: id, from_state: null, to_state: state, source: 'create', note: null, omstudio_ref: omstudio_ref || null });
+      return id;
+    }
+    const id = ++this.json._seq.approval;
+    this.json.approval_requests.push({
+      id,
+      source_decision_id: source_decision_id || null,
+      session_id: session_id || null,
+      classification,
+      domains: domains || null,
+      proposal_summary,
+      state,
+      omstudio_ref: omstudio_ref || null,
+      created_at: new Date().toISOString(),
+    });
+    this._appendApprovalHistory({ approval_id: id, from_state: null, to_state: state, source: 'create', note: null, omstudio_ref: omstudio_ref || null });
+    this._persistJson();
+    return id;
+  }
+
+  getApprovalRequest(id) {
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare('SELECT * FROM approval_requests WHERE id = ?').get(id);
+    }
+    return this.json.approval_requests.find((r) => r.id === Number(id)) || null;
+  }
+
+  listApprovalRequests(limit = 100) {
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare('SELECT * FROM approval_requests ORDER BY id DESC LIMIT ?').all(limit);
+    }
+    return this.json.approval_requests.slice(-limit).reverse();
+  }
+
+  /**
+   * Advance an approval request's current-state column AND append a history row.
+   * The CALLER is responsible for validating the transition via the deterministic
+   * approval state machine before calling this. We record history append-only.
+   */
+  advanceApprovalState({ approval_id, from_state, to_state, source, note, omstudio_ref }) {
+    if (this.backend === 'sqlite') {
+      // Note: this UPDATE only touches the denormalized current-state column on
+      // approval_requests (which is intentionally mutable-forward); the
+      // authoritative trail is the append-only history row written below.
+      this.sqlite
+        .prepare('UPDATE approval_requests SET state = ?, omstudio_ref = COALESCE(?, omstudio_ref) WHERE id = ?')
+        .run(to_state, omstudio_ref || null, approval_id);
+      this._appendApprovalHistory({ approval_id, from_state, to_state, source, note, omstudio_ref });
+      return true;
+    }
+    const row = this.json.approval_requests.find((r) => r.id === Number(approval_id));
+    if (row) {
+      row.state = to_state;
+      if (omstudio_ref) row.omstudio_ref = omstudio_ref;
+    }
+    this._appendApprovalHistory({ approval_id, from_state, to_state, source, note, omstudio_ref });
+    this._persistJson();
+    return true;
+  }
+
+  _appendApprovalHistory({ approval_id, from_state, to_state, source, note, omstudio_ref }) {
+    if (this.backend === 'sqlite') {
+      this.sqlite
+        .prepare(
+          `INSERT INTO approval_status_history (approval_id, from_state, to_state, source, note, omstudio_ref)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(approval_id, from_state || null, to_state, source, note || null, omstudio_ref || null);
+      return;
+    }
+    const id = ++this.json._seq.apphist;
+    this.json.approval_status_history.push({
+      id,
+      approval_id: Number(approval_id),
+      from_state: from_state || null,
+      to_state,
+      source,
+      note: note || null,
+      omstudio_ref: omstudio_ref || null,
+      created_at: new Date().toISOString(),
+    });
+    this._persistJson();
+  }
+
+  approvalHistory(approval_id) {
+    if (this.backend === 'sqlite') {
+      return this.sqlite
+        .prepare('SELECT * FROM approval_status_history WHERE approval_id = ? ORDER BY id ASC')
+        .all(approval_id);
+    }
+    return this.json.approval_status_history.filter((r) => r.approval_id === Number(approval_id));
   }
 
   close() {

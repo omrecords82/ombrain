@@ -60,6 +60,9 @@ class Orchestrator {
   constructor(deps = {}) {
     this.db = deps.db;
     this.ai = deps.aiClient || null;
+    // Optional governance manager (OMStudio audit + approval surfacing). When
+    // absent the orchestrator still works; governance fields are simply omitted.
+    this.governance = deps.governance || null;
     this.doctrineText = this._loadDoctrine();
   }
 
@@ -203,6 +206,18 @@ class Orchestrator {
       }
     }
 
+    // OMStudio governance surface: audit every decision; for human-only /
+    // Tier 0 classifications create+submit an approval request. The Brain still
+    // NEVER executes; it only tracks the approval lifecycle.
+    let governanceResult = null;
+    if (this.governance) {
+      try {
+        governanceResult = await this.governance.processDecision(decision, verdict);
+      } catch (e) {
+        logger.warn('governance_process_error', { name: e && e.name });
+      }
+    }
+
     logger.info('diagnose_complete', {
       session_id: sessionId,
       classification: verdict.classification,
@@ -229,6 +244,20 @@ class Orchestrator {
       model_advisory: modelAdvisory,
       escalation,
       decision_ledger_id: decision.id || null,
+      omstudio: governanceResult
+        ? {
+            audited: governanceResult.audited,
+            audit_ref: governanceResult.audit_ref,
+            requires_human_superadmin_approval: governanceResult.requires_human_superadmin_approval,
+            omstudio_approval_ref: governanceResult.omstudio_approval_ref,
+            approval_id: governanceResult.approval_id,
+            status: governanceResult.approval_state,
+          }
+        : null,
+      // Top-level convenience flag mirroring the governance result.
+      requires_human_superadmin_approval: governanceResult
+        ? governanceResult.requires_human_superadmin_approval
+        : verdict.requiresOmstudio,
       executed: false, // the Brain NEVER executes
     };
   }
