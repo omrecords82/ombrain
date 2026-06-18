@@ -174,7 +174,7 @@ class OmstudioClient {
 
     try {
       const r = await this._httpSend('POST', this._url(this.paths.audit), payload);
-      const ref = (r.json && (r.json.id || r.json.ref)) || null;
+      const ref = (r.json && (r.json.ref || r.json.id)) || null;
       logger.info('omstudio_audit_http', { status: r.status, ok: r.ok });
       return { ok: r.ok, ref, transport: 'http' };
     } catch (e) {
@@ -210,7 +210,7 @@ class OmstudioClient {
 
     try {
       const r = await this._httpSend('POST', this._url(this.paths.approvals), payload);
-      const ref = (r.json && (r.json.id || r.json.ref)) || null;
+      const ref = (r.json && (r.json.ref || r.json.id)) || null;
       logger.info('omstudio_approval_http', { status: r.status, ok: r.ok });
       return { ok: r.ok, ref, transport: 'http' };
     } catch (e) {

@@ -103,6 +103,23 @@ test('http transport allows a LAN host and redacts the wire payload', async () =
   assert.equal(sentHeaders.Authorization, 'Bearer omstudio-secret-token-xyz');
 });
 
+test('http transport prefers string ref over numeric id in approval response', async () => {
+  const client = new OmstudioClient({
+    transport: 'http',
+    baseUrl: 'http://192.168.1.242/omstudio-embed',
+    production: true,
+    httpImpl: async () => ({
+      ok: true,
+      status: 201,
+      text: async () =>
+        JSON.stringify({ id: 42, ref: 'oms-app-2026-06-18-abc123' }),
+    }),
+  });
+  const res = await client.submitApprovalRequest({ classification: 'requires_human_superadmin' });
+  assert.equal(res.ok, true);
+  assert.equal(res.ref, 'oms-app-2026-06-18-abc123');
+});
+
 test('dry-run getApprovalStatus returns null state (status arrives via ingest)', async () => {
   const client = new OmstudioClient({ transport: 'dryrun', outboxDir: tmpDir() });
   const r = await client.getApprovalStatus('whatever');
