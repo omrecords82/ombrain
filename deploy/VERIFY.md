@@ -112,3 +112,18 @@ recommends; the human-performed deploy is logged for governance traceability.
 In live deployments, wire OMStudio (or the .242 edge) to POST superadmin
 decisions to `POST /governance/approvals/:id/ingest-status` — that is the
 external webhook target through which APPROVED/REJECTED outcomes arrive.
+
+See `deploy/WEBHOOK-NGINX.md` for auth01 nginx install (`:8391`, `.242` only).
+
+## 8. Fork A ingestion JWT (§7)
+```bash
+# On .239 — mint brain_ingest JWT and push to auth01
+set -a && source /var/www/omai/.env.omai && set +a
+sudo -E om-brain/deploy/provision-brain-ingest.sh --update-auth01
+
+# Verify scoped reads (replace $JWT from /tmp/brain-ingest-jwt.env on .239)
+curl -s -H "Authorization: Bearer $JWT" http://192.168.1.239:7060/api/deploy-runs?limit=1 | jq .
+curl -s -H "Authorization: Bearer $JWT" http://192.168.1.239:7060/api/platform/events?limit=1 | jq '.total'
+```
+Expected: HTTP 200 on deploy-runs and platform events; `brain_ingest` cannot POST
+to registry approve/ignore endpoints (403).
