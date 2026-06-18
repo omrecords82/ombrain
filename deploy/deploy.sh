@@ -38,6 +38,19 @@ if ! id -u "${SVC_USER}" >/dev/null 2>&1; then
   useradd --system --no-create-home --shell /usr/sbin/nologin "${SVC_USER}"
 fi
 
+# 1b) Release backup (so deploy/rollback.sh can restore the previous release).
+#     Snapshots the CURRENT /opt/om-brain (excluding state/secrets) before sync.
+BACKUP_ROOT="/var/backups/om-brain"
+if [[ -d "${APP_DIR}" ]] && [[ -n "$(ls -A "${APP_DIR}" 2>/dev/null || true)" ]]; then
+  TS="$(date -u +%Y%m%dT%H%M%SZ)"
+  echo "[deploy] backing up current release to ${BACKUP_ROOT}/${TS}"
+  mkdir -p "${BACKUP_ROOT}/${TS}"
+  rsync -a --exclude 'data' --exclude '.env' --exclude 'node_modules' \
+    "${APP_DIR}/" "${BACKUP_ROOT}/${TS}/"
+  # Keep only the 5 most recent backups.
+  ls -1dt "${BACKUP_ROOT}"/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
+fi
+
 # 2) Lay down code (excluding node_modules dev junk; install prod deps in place).
 echo "[deploy] syncing application code to ${APP_DIR}"
 mkdir -p "${APP_DIR}"

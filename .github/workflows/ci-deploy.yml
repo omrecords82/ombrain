@@ -1,0 +1,77 @@
+# =============================================================================
+# OrthodoxMetrics Brain — CI + gated deploy workflow
+# =============================================================================
+# CI runs on every push/PR and is a MANDATORY gate: install + init-db smoke +
+# full test suite. The deploy job is MANUAL ONLY (workflow_dispatch) and
+# additionally gated by a GitHub Environment ("auth01-production") that the
+# team configures with REQUIRED REVIEWERS, so a human superadmin must approve
+# the run before it can touch auth01.
+#
+# DOCTRINE: deploying to auth01 (.254) and any auth/secret/boundary change is
+# human-approved, OMStudio-governed work. This workflow NEVER auto-deploys; the
+# deploy job will not run without an explicit dispatch AND an environment
+# approval. The runner must be a self-hosted runner on the LAN that can reach
+# auth01 over SSH (the build does NOT ship credentials).
+# =============================================================================
+
+name: om-brain-ci-deploy
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DEPLOY to confirm a gated deploy to auth01 (.254)'
+        required: true
+        default: 'no'
+      work_item:
+        description: 'OMStudio work-item / approval reference (required for audit)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---- MANDATORY TEST GATE --------------------------------------------------
+  test:
+    name: install + init-db + test (gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install (no dev assumptions; optional native deps may fall back)
+        run: npm ci || npm install
+      - name: init-db smoke (uses JSON fallback if native SQLite unavailable)
+        run: npm run init-db
+      - name: Run test suite (MANDATORY — deploy cannot proceed if this fails)
+        run: npm test
+
+  # ---- GATED DEPLOY (manual + environment approval) -------------------------
+  deploy:
+    name: deploy to auth01 (.254) — manual + superadmin-approved
+    needs: test
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'DEPLOY'
+    runs-on: [self-hosted, lan, auth01-deployer]   # self-hosted runner on the LAN
+    environment:
+      name: auth01-production          # configure REQUIRED REVIEWERS on this env
+    concurrency:
+      group: auth01-om-brain-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record governance context
+        run: |
+          echo "Deploy authorized under OMStudio work item: ${{ github.event.inputs.work_item }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "NOTE: boundary/auth/secret changes remain human-approved + OMStudio-governed."
+      - name: Run repeatable deploy script (idempotent)
+        # The deploy script is safe to re-run; it builds prod deps, refreshes the
+        # systemd unit/slice, restarts, and runs the VERIFY smoke. It does NOT
+        # mint secrets or change auth/boundary config.
+        run: sudo bash deploy/deploy.sh
+      - name: Post-deploy verification
+        run: sudo bash deploy/verify-smoke.sh
