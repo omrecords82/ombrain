@@ -4,19 +4,23 @@
 # Brain docs, governance package, redacted config templates.
 #
 # Usage:
-#   ./scripts/export-manus-ecosystem-bundle.sh
-#   ./scripts/export-manus-ecosystem-bundle.sh /tmp/my-bundle
+#   om-brain/deploy/export-manus-ecosystem-bundle.sh
+#   om-brain/deploy/export-manus-ecosystem-bundle.sh /backups/manus-exports/my-bundle
 #
 # Optional env overrides:
+#   EXPORT_ROOT=/var/www/omai/exports   # default; local disk (~51G free on om-prod01)
+#   EXPORT_ROOT=/backups/manus-exports  # NFS alternative (7T+) if local disk tight
 #   OM_ROOT=/var/www/orthodoxmetrics/prod
 #   OMAI_ROOT=/var/www/omai
 #   OMSTUDIO_HOST=next@192.168.1.242
 #   WORKSHOP_HOST=next@192.168.1.251
 #   SKIP_REMOTE=1   # only bundle local repos
+#   INCLUDE_MEDIA=1 # include public/images and server/storage (large)
 
 set -euo pipefail
 
-OUT_DIR="${1:-/tmp/manus-ecosystem-$(date +%Y%m%d)}"
+EXPORT_ROOT="${EXPORT_ROOT:-/var/www/omai/exports}"
+OUT_DIR="${1:-${EXPORT_ROOT}/manus-ecosystem-$(date +%Y%m%d-%H%M%S)}"
 OM_ROOT="${OM_ROOT:-/var/www/orthodoxmetrics/prod}"
 OMAI_ROOT="${OMAI_ROOT:-/var/www/omai}"
 OMSTUDIO_HOST="${OMSTUDIO_HOST:-next@192.168.1.242}"
@@ -40,11 +44,55 @@ RSYNC_EXCLUDES=(
   --exclude '.env.*'
   --exclude '!*.env.example'
   --exclude '!**/.env.example'
+  --exclude '.idea'
+  --exclude '.vscode'
+  --exclude '.cursor'
+  --exclude '.credentials'
+  --exclude 'server/.credentials'
+  --exclude '*.tsbuildinfo'
+  --exclude 'public-docs-library'
+  --exclude 'misc-mirror'
+  --exclude 'archive'
 )
+
+# Brain/code review does not need multi-GB assets; skip unless INCLUDE_MEDIA=1
+if [[ "${INCLUDE_MEDIA:-0}" != "1" ]]; then
+  RSYNC_EXCLUDES+=(
+    --exclude 'server/storage'
+    --exclude 'front-end/public/images'
+    --exclude 'front-end/public/assets'
+    --exclude 'public/images'
+    --exclude 'public/assets'
+    --exclude 'storage'
+    --exclude '*.png'
+    --exclude '*.jpg'
+    --exclude '*.jpeg'
+    --exclude '*.webp'
+    --exclude '*.gif'
+    --exclude '*.mp4'
+    --exclude '*.zip'
+    --exclude '*.tar.gz'
+    --exclude '*.pdf'
+  )
+fi
 
 mkdir -p "$OUT_DIR"/{repos,docs,config-templates,brain}
 
 log() { printf '[manus-export] %s\n' "$*"; }
+
+preflight() {
+  if [[ "$OUT_DIR" == /tmp/* ]]; then
+    log "WARN: output under /tmp (tmpfs quota). Prefer: EXPORT_ROOT=/backups/manus-exports"
+  fi
+  mkdir -p "$(dirname "$OUT_DIR")"
+  local avail_kb
+  avail_kb="$(df -k "$(dirname "$OUT_DIR")" | awk 'NR==2 {print $4}')"
+  if [[ -n "$avail_kb" && "$avail_kb" -lt 3145728 ]]; then
+    log "ERROR: less than 3 GB free on $(dirname "$OUT_DIR") — set EXPORT_ROOT=/backups/manus-exports or free disk"
+    exit 1
+  fi
+  log "Writing to $OUT_DIR ($(df -h "$(dirname "$OUT_DIR")" | awk 'NR==2 {print $4 " free on " $1}'))"
+}
 
 git_meta() { :; }  # manifest uses python3
 
@@ -57,17 +105,29 @@ bundle_local_repo() {
   fi
   log "Bundling $dest_name from $src"
   mkdir -p "$dest"
-  rsync -a "${RSYNC_EXCLUDES[@]}" "$src/" "$dest/"
+  if git -C "$src" rev-parse HEAD &>/dev/null; then
+    log "  → git archive HEAD (source only, no node_modules/dist)"
+    git -C "$src" archive HEAD | tar -x -C "$dest"
+  else
+    log "  → rsync (not a git repo)"
+    rsync -a "${RSYNC_EXCLUDES[@]}" "$src/" "$dest/"
+  fi
 }
 
 bundle_remote_repo() {
   local host="$1" remote_path="$2" dest_name="$3"
   local dest="$OUT_DIR/repos/$dest_name"
-  log "Remote rsync $host:$remote_path → $dest_name"
+  log "Remote bundle $host:$remote_path → $dest_name"
   mkdir -p "$dest"
-  rsync -a "${RSYNC_EXCLUDES[@]}" -e ssh "$host:$remote_path/" "$dest/" || {
-    log "WARN: remote rsync failed for $dest_name ($host)"
-  }
+  if ssh "$host" "git -C $(printf '%q' "$remote_path") rev-parse HEAD" &>/dev/null; then
+    log "  → git archive over SSH"
+    ssh "$host" "git -C $(printf '%q' "$remote_path") archive HEAD" | tar -x -C "$dest"
+  else
+    log "  → rsync fallback"
+    rsync -a "${RSYNC_EXCLUDES[@]}" -e ssh "$host:$remote_path/" "$dest/" || {
+      log "WARN: remote bundle failed for $dest_name ($host)"
+    }
+  fi
 }
 
 copy_brain_docs() {
@@ -110,6 +170,7 @@ write_manifest() {
   log "Writing $manifest"
   python3 - <<'PY' "$manifest" "$OM_ROOT" "$OMAI_ROOT" "$OUT_DIR"
 import json, subprocess, sys, datetime
+from datetime import timezone
 from pathlib import Path
 
 manifest, om_root, omai_root, out_dir = sys.argv[1:5]
@@ -137,7 +198,7 @@ repos.update(git_meta(f"{out_dir}/repos/om-workshop", "om-workshop"))
 repos["_note"] = "om-brain lives inside omai repo at om-brain/"
 
 doc = {
-    "generated_at": datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+    "generated_at": datetime.datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     "purpose": "Manus ecosystem deep dive — Brain connection and governance",
     "entry_doc": "docs/om-brain/00-manus-ecosystem-deep-dive.md",
     "reading_order": "docs/om-brain/README.md",
@@ -193,6 +254,7 @@ EOF
 }
 
 # ─── main ───────────────────────────────────────────────────
+preflight
 log "Output: $OUT_DIR"
 bundle_local_repo "$OM_ROOT" "orthodoxmetrics-prod"
 bundle_local_repo "$OMAI_ROOT" "omai"
@@ -213,3 +275,4 @@ TARBALL="${OUT_DIR}.tar.gz"
 log "Creating $TARBALL"
 tar -czf "$TARBALL" -C "$(dirname "$OUT_DIR")" "$(basename "$OUT_DIR")"
 log "Done: $TARBALL ($(du -h "$TARBALL" | cut -f1))"
+log "Remove partial dir if desired: rm -rf $(printf '%q' "$OUT_DIR")"
