@@ -48,7 +48,7 @@ function main() {
 
   // Read-only ingestion adapters (disabled by default via env).
   const eventAdapter = new EventAdapter({ db });
-  const inventoryAdapter = new InventoryAdapter({ db });
+  const inventoryAdapter = new InventoryAdapter({ db, governance });
   const logAdapter = new LogAdapter({ db });
   eventAdapter.start();
   inventoryAdapter.start();

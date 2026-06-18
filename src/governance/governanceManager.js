@@ -170,6 +170,42 @@ class GovernanceManager {
   }
 
   /**
+   * Emit a read-only observability audit (inventory health transitions, host
+   * recovery, etc.). Does not open approval requests.
+   */
+  async emitObservabilityAudit({ kind, title, message, payload = {} }) {
+    const auditRecord = redactForLog({
+      classification: 'observability',
+      recommendation: title,
+      rationale: message,
+      doctrine_rule: null,
+      owning_system: 'om-brain',
+      requires_omstudio: false,
+      observability_kind: kind,
+      observability_payload: payload,
+    });
+
+    try {
+      const emit = await this.omstudio.emitAuditEvent(auditRecord);
+      if (this.db) {
+        this.db.appendOmstudioAudit({
+          kind: 'observability_event',
+          source_decision_id: null,
+          classification: kind,
+          transport: emit.transport,
+          omstudio_ref: emit.ref || null,
+          payload_json: JSON.stringify(auditRecord),
+        });
+      }
+      logger.info('governance_observability_audit', { kind, ok: emit.ok, ref: emit.ref || null });
+      return emit;
+    } catch (e) {
+      logger.warn('governance_observability_audit_error', { kind, name: e && e.name });
+      return { ok: false, ref: null, transport: 'error' };
+    }
+  }
+
+  /**
    * Ingest an EXTERNALLY-sourced status for an approval request. This is the ONLY
    * path that can move an approval to APPROVED/REJECTED/EXPIRED. The Brain itself
    * cannot call this with a brain source for those states (the state machine

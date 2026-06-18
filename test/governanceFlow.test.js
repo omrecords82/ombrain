@@ -61,6 +61,20 @@ test('auto-safe action is audited but creates NO approval request', async () => 
   assert.equal(audit[0].kind, 'audit_event');
 });
 
+test('observability audit records platform health improvement without approval', async () => {
+  const { governance, db } = freshStack();
+  const emit = await governance.emitObservabilityAudit({
+    kind: 'platform_health_improved',
+    title: 'Platform health improved',
+    message: 'Fleet health rose from 60% to 75%.',
+    payload: { from_score: 60, to_score: 75 },
+  });
+  assert.equal(emit.ok, true);
+  const audit = db.listOmstudioAudit(10);
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].kind, 'observability_event');
+});
+
 test('Tier 0 cross-tenant case escalates and creates an approval request', async () => {
   const { orchestrator, db } = freshStack();
   const out = await orchestrator.diagnose({
