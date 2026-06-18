@@ -1,0 +1,71 @@
+# om-brain.service — OrthodoxMetrics Brain Phase 1 substrate.
+# Install: /etc/systemd/system/om-brain.service
+#
+# Runs as a dedicated unprivileged service user inside om-brain.slice. Hardened
+# with systemd sandboxing. The Brain is an AUDITOR: it observes/analyzes/explains/
+# recommends and NEVER executes governed or never-auto actions. It talks ONLY to
+# a local/LAN inference endpoint (enforced in code by the circuit breaker AND
+# here by IP address allow/deny lists as defense-in-depth).
+
+[Unit]
+Description=OrthodoxMetrics Brain (Phase 1 auditor substrate, OM-DOCTRINE-0001)
+Documentation=file:/opt/om-brain/README.md
+After=network-online.target
+Wants=network-online.target
+# Co-located with Keycloak/PostgreSQL but must never block their start.
+After=keycloak.service postgresql.service
+
+[Service]
+Type=simple
+Slice=om-brain.slice
+
+# --- Identity ---
+User=om-brain
+Group=om-brain
+
+# --- Code + working dir ---
+WorkingDirectory=/opt/om-brain
+EnvironmentFile=/etc/om-brain/om-brain.env
+ExecStartPre=/usr/bin/node /opt/om-brain/scripts/init-db.js
+ExecStart=/usr/bin/node /opt/om-brain/src/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=60
+
+# --- Filesystem hardening ---
+ProtectSystem=strict
+ProtectHome=yes
+# Only the SQLite memory dir and runtime are writable.
+ReadWritePaths=/var/lib/om-brain
+StateDirectory=om-brain
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+RestrictRealtime=yes
+RestrictNamespaces=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# --- Network egress containment (defense-in-depth for the circuit breaker) ---
+# Deny everything, then allow ONLY loopback + RFC1918 LAN ranges. An external
+# LLM host (e.g. api.openai.com) is unreachable at the kernel level even if the
+# in-code breaker were bypassed. Adjust the inference host IP as needed; the
+# values below match auth01-local inference (127.0.0.1) and the LAN.
+IPAddressDeny=any
+IPAddressAllow=localhost
+IPAddressAllow=127.0.0.0/8
+IPAddressAllow=10.0.0.0/8
+IPAddressAllow=172.16.0.0/12
+IPAddressAllow=192.168.0.0/16
+
+# Restrict address families to IP + unix only.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

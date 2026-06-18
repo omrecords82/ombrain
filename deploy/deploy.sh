@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+#
+# deploy.sh — repeatable installer for the OrthodoxMetrics Brain on auth01
+# (192.168.1.254). Run by the user's team WITH superadmin authorization.
+#
+# This script installs the Brain as an isolated, hardened systemd service inside
+# om-brain.slice. It does NOT touch Keycloak, PostgreSQL, nginx, the database
+# schema, or any OM/OMAI/OMStudio surface — those are human-only domains.
+#
+# It is idempotent: safe to re-run for upgrades. Pair with teardown.sh to remove.
+#
+# Usage (on auth01, as a user with sudo):
+#   sudo ./deploy/deploy.sh
+#
+# Pre-req recorded in README: superadmin approval to co-locate inference on
+# auth01 is GRANTED; this remains logged to OMStudio as a boundary-defining act.
+
+set -euo pipefail
+
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_DIR="/opt/om-brain"
+STATE_DIR="/var/lib/om-brain"
+ETC_DIR="/etc/om-brain"
+SVC_USER="om-brain"
+SVC_GROUP="om-brain"
+
+echo "[deploy] OrthodoxMetrics Brain — auth01 install"
+echo "[deploy] source: ${SRC_DIR}"
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "[deploy] ERROR: must run as root (sudo)." >&2
+  exit 1
+fi
+
+# 1) Dedicated, unprivileged service user.
+if ! id -u "${SVC_USER}" >/dev/null 2>&1; then
+  echo "[deploy] creating service user ${SVC_USER}"
+  useradd --system --no-create-home --shell /usr/sbin/nologin "${SVC_USER}"
+fi
+
+# 2) Lay down code (excluding node_modules dev junk; install prod deps in place).
+echo "[deploy] syncing application code to ${APP_DIR}"
+mkdir -p "${APP_DIR}"
+rsync -a --delete \
+  --exclude '.git' \
+  --exclude 'data' \
+  --exclude '.env' \
+  "${SRC_DIR}/" "${APP_DIR}/"
+
+echo "[deploy] installing production dependencies"
+# Optional native deps (better-sqlite3, sqlite-vec) accelerate the vector store;
+# if they fail to build, the pure-JS fallback keeps the Brain fully functional.
+( cd "${APP_DIR}" && npm install --omit=dev --no-audit --no-fund ) || {
+  echo "[deploy] WARNING: npm install reported issues; verifying runtime fallback…"
+  ( cd "${APP_DIR}" && node -e "require('./src/memory/db'); console.log('runtime OK (fallback available)')" )
+}
+
+# 3) State dir for the SQLite memory.
+mkdir -p "${STATE_DIR}"
+chown -R "${SVC_USER}:${SVC_GROUP}" "${STATE_DIR}" "${APP_DIR}"
+
+# 4) Environment file (created once; never overwritten on re-run).
+mkdir -p "${ETC_DIR}"
+if [[ ! -f "${ETC_DIR}/om-brain.env" ]]; then
+  echo "[deploy] installing env template to ${ETC_DIR}/om-brain.env (EDIT IT)"
+  install -m 0640 -o root -g "${SVC_GROUP}" \
+    "${APP_DIR}/deploy/om-brain.env.example" "${ETC_DIR}/om-brain.env"
+else
+  echo "[deploy] keeping existing ${ETC_DIR}/om-brain.env"
+fi
+
+# 5) systemd slice + unit.
+echo "[deploy] installing systemd slice and unit"
+install -m 0644 "${APP_DIR}/deploy/om-brain.slice"   /etc/systemd/system/om-brain.slice
+install -m 0644 "${APP_DIR}/deploy/om-brain.service" /etc/systemd/system/om-brain.service
+
+systemctl daemon-reload
+systemctl enable om-brain.service
+systemctl restart om-brain.service
+
+echo "[deploy] done. Follow deploy/VERIFY.md to confirm the definition-of-done."
+echo "[deploy] quick check: systemctl status om-brain.service --no-pager"

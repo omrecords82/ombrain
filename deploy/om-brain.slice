@@ -1,0 +1,37 @@
+# om-brain.slice — resource-isolation cgroup slice for the OrthodoxMetrics Brain
+# on auth01 (192.168.1.254).
+#
+# RATIONALE (system-truth host.auth01): auth01 co-hosts Keycloak SSO (:8080) and
+# its PostgreSQL. Per the CONFIRMED Phase 1 hardware decision and the superadmin
+# co-location approval recorded in the README, Brain inference MUST be confined
+# by a hard MemoryMax and a CPUQuota so an LLM memory/CPU spike can NEVER starve
+# Keycloak or PostgreSQL. These caps are deliberately conservative for the
+# 30 vCPU / 53 GB host and should be tuned ONLY with superadmin sign-off (a
+# substrate/boundary change — human-only, logged to OMStudio).
+#
+# Install: /etc/systemd/system/om-brain.slice
+
+[Unit]
+Description=OrthodoxMetrics Brain isolation slice (inference resource cap)
+Before=slices.target
+
+[Slice]
+# --- Memory ---
+# Hard ceiling. The Brain process group is OOM-killed before it can grow past
+# this; it can never consume the RAM Keycloak/PostgreSQL rely on.
+MemoryAccounting=yes
+MemoryMax=20G
+MemoryHigh=16G
+MemorySwapMax=0
+
+# --- CPU ---
+# Cap to ~12 of 30 vCPUs (1200%) so SSO auth latency is protected under load.
+CPUAccounting=yes
+CPUQuota=1200%
+CPUWeight=30
+
+# --- Tasks / IO ---
+TasksAccounting=yes
+TasksMax=4096
+IOAccounting=yes
+IOWeight=30

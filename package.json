@@ -1,0 +1,27 @@
+{
+  "name": "om-brain",
+  "version": "1.0.0",
+  "description": "OrthodoxMetrics Brain — Phase 1 external auditor substrate (observe, analyze, explain, recommend). Governed by OM-DOCTRINE-0001.",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "init-db": "node scripts/init-db.js",
+    "test": "node --test test/*.test.js",
+    "lint": "node -e \"console.log('lint placeholder — no linter bundled')\""
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "openai": "^4.56.0",
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.3.0",
+    "sqlite-vec": "^0.1.6"
+  },
+  "devDependencies": {}
+}
