@@ -17,10 +17,10 @@ test('computeFleetHealthFromSummary matches om-dev recovery scenario', () => {
 });
 
 test('diffHostStatuses detects recovery', () => {
-  const prev = { 'om-dev': 'unreachable', auth01: 'online' };
+  const prev = { 'om-dev': 'unreachable', auth0: 'online' };
   const servers = [
     { id: 'om-dev', hostname: 'om-dev.internal', status: 'online' },
-    { id: 'auth01', hostname: 'auth01.internal', status: 'online' },
+    { id: 'auth0', hostname: 'auth0.internal', status: 'online' },
   ];
   const { recovered, degraded } = diffHostStatuses(prev, servers);
   assert.equal(recovered.length, 1);
