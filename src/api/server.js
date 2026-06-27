@@ -288,6 +288,51 @@ function createServer(deps = {}) {
   });
 
   // -------------------------------------------------------------------------
+  // §5 — Correction memory: full feedback REST surface
+  // (literal paths before /brain/feedback/:decision_id)
+  // -------------------------------------------------------------------------
+
+  app.get('/brain/feedback/patterns', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const { config } = require('../config');
+    const threshold = config.learning.stumbleThreshold || 3;
+    const questionTypes = [
+      'service_restart_recommendation', 'cross_tenant_detection',
+      'schema_change_governance', 'never_auto_action', 'informational', 'other',
+    ];
+    const patterns = questionTypes
+      .map((qt) => {
+        const rows = db.correctionsByQuestionType(qt);
+        return { question_type: qt, correction_count: rows.length, exceeds_threshold: rows.length >= threshold };
+      })
+      .filter((p) => p.correction_count > 0);
+    return res.json({ threshold, patterns });
+  });
+
+  app.get('/brain/feedback', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const rows = db.listCorrections({ limit });
+    const active = rows.filter((r) => r.active !== 0);
+    return res.json({ count: active.length, corrections: active });
+  });
+
+  app.get('/brain/feedback/:decision_id', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const rows = db.correctionsForDecision(req.params.decision_id);
+    return res.json({ count: rows.length, corrections: rows });
+  });
+
+  app.patch('/brain/feedback/:id', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const b = req.body || {};
+    if (!b.correction) return res.status(400).json({ ok: false, error: 'correction_required' });
+    const newId = db.reviseCorrection(req.params.id, { correction: b.correction, verdict: b.verdict });
+    if (!newId) return res.status(404).json({ ok: false, error: 'correction_not_found' });
+    return res.json({ ok: true, original_id: req.params.id, new_id: newId });
+  });
+
+  // -------------------------------------------------------------------------
   // Phase 2 — Theological memory (read-only after seed)
   // -------------------------------------------------------------------------
   app.get('/brain/theology', (req, res) => {
@@ -296,6 +341,68 @@ function createServer(deps = {}) {
     if (!req.query.q) return res.status(400).json({ ok: false, error: 'q_required' });
     const rows = db.searchTheology(req.query.q, { category: req.query.category, limit });
     return res.json({ count: rows.length, results: rows });
+  });
+
+  // POST /brain/theology/ask — RAG answer (literal path before :reference_key)
+  app.post('/brain/theology/ask', async (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const b = req.body || {};
+    if (!b.question) return res.status(400).json({ ok: false, error: 'question_required' });
+    const { config } = require('../config');
+    if (!config.theology || !config.theology.enabled) {
+      return res.status(503).json({ ok: false, error: 'theology_disabled', hint: 'Set BRAIN_THEOLOGY_ENABLED=true' });
+    }
+    const topK = config.theology.topK || 8;
+    const chunks = db.searchTheology(b.question, { limit: topK });
+    const citations = chunks.map((c) => ({
+      source_ref: c.source_ref || c.reference_key,
+      source: c.source,
+      category: c.category,
+      body: c.body.slice(0, 400),
+    }));
+    let answer = null;
+    if (orchestrator && orchestrator.ai) {
+      try {
+        const context = chunks.map((c) => `[${c.source_ref || c.reference_key}] ${c.body}`).join('\n\n');
+        const prompt = `You are an Orthodox Christian theological assistant. Answer the following question using ONLY the provided sources. Always cite your sources. If the Fathers are not unanimous on a topic, note that explicitly.\n\nQuestion: ${b.question}\n\nSources:\n${context}`;
+        const adv = await orchestrator.ai.complete({ prompt, sessionId: b.session_id || 'theology-' + Date.now() });
+        if (adv && adv.ok) answer = adv.content;
+      } catch (_) {}
+    }
+    return res.json({
+      ok: true,
+      question: b.question,
+      answer: answer || '(AI client not available — see citations below)',
+      citations,
+      source_count: citations.length,
+    });
+  });
+
+  app.get('/brain/theology/scripture', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    let book = req.query.book;
+    let chapter = req.query.chapter ? Number(req.query.chapter) : null;
+    let verseStart = req.query.verse ? Number(req.query.verse) : null;
+    let verseEnd = req.query.verse_end ? Number(req.query.verse_end) : verseStart;
+    if (req.query.ref) {
+      const m = String(req.query.ref).match(/^([A-Za-z0-9 ]+)\+(\d+):(\d+)(?:-(\d+))?$/);
+      if (m) { book = m[1]; chapter = Number(m[2]); verseStart = Number(m[3]); verseEnd = m[4] ? Number(m[4]) : verseStart; }
+    }
+    if (!book || !chapter) return res.status(400).json({ ok: false, error: 'book_and_chapter_required' });
+    const verses = db.scriptureByRef(book, chapter, verseStart, verseEnd);
+    return res.json({ book, chapter, verse_start: verseStart, verse_end: verseEnd, count: verses.length, verses });
+  });
+
+  app.get('/brain/theology/topics', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const topics = db.theologyTopics();
+    return res.json({ count: topics.length, topics });
+  });
+
+  app.get('/brain/theology/sources', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const sources = db.theologySources();
+    return res.json({ count: sources.length, sources });
   });
 
   app.get('/brain/theology/:reference_key', (req, res) => {
@@ -352,10 +459,6 @@ function createServer(deps = {}) {
     db.markBtwDelivered(req.params.id);
     return res.json({ ok: true });
   });
-
-  // -------------------------------------------------------------------------
-  // Phase 2 — Health update (report phase 2 is live)
-  // -------------------------------------------------------------------------
 
   // No mutation routes exist by design (the ingest endpoint applies only
   // externally-sourced statuses through the deterministic state machine).

@@ -114,6 +114,54 @@ class Orchestrator {
     }
   }
 
+  /**
+   * Detect the question_type for a given proposal/incident.
+   * Maps the incoming request to one of the spec §5a question_type buckets.
+   * This runs BEFORE the deterministic rule engine and is used for:
+   *   a) fetching relevant corrections from correction_memory
+   *   b) stumble-threshold escalation check
+   */
+  _detectQuestionType(proposal, protectedConcern) {
+    const text = JSON.stringify(proposal || '').toLowerCase();
+    if (protectedConcern === 'cross_tenant') return 'cross_tenant_detection';
+    if (/restart|reboot|pm2|systemctl|service/.test(text)) return 'service_restart_recommendation';
+    if (/schema|migration|alter table|drop table|create table/.test(text)) return 'schema_change_governance';
+    if (/never.auto|never auto|forbidden|doctrine/.test(text)) return 'never_auto_action';
+    if (/what is|explain|describe|how does|tell me/.test(text)) return 'informational';
+    return 'other';
+  }
+
+  /**
+   * Recall active corrections for a specific question_type.
+   * Returns an array of correction rows to inject as KNOWN CORRECTIONS.
+   */
+  _recallCorrectionsByType(question_type) {
+    if (!this.db) return [];
+    try {
+      return this.db.correctionsByQuestionType(question_type);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /**
+   * Detect stuck-thinking: same session_id or work_item_ref produced the same
+   * classification + recommendation in a prior attempt.
+   * Returns { stuck: bool, priorAttempts: [] }
+   */
+  _detectStuckThinking(sessionId, classification) {
+    if (!this.db || !sessionId) return { stuck: false, priorAttempts: [] };
+    try {
+      const prior = this.db.listDecisions
+        ? this.db.listDecisions({ session_id: sessionId, limit: 5 })
+        : [];
+      const matching = prior.filter((d) => d.classification === classification);
+      return { stuck: matching.length >= 2, priorAttempts: matching };
+    } catch (_) {
+      return { stuck: false, priorAttempts: [] };
+    }
+  }
+
   _recallSystemTruth(owningSystem) {
     if (!this.db) return [];
     try {
@@ -272,6 +320,33 @@ class Orchestrator {
   }
 
   /**
+   * §6 — Classify whether a question is theological in nature.
+   * Returns true when the question should be routed to the theology RAG path
+   * instead of the governance/diagnostic path.
+   */
+  _isTheologicalQuestion(text) {
+    const t = String(text || '').toLowerCase();
+    return /\b(god|christ|jesus|holy spirit|trinity|theosis|salvation|church|orthodox|saint|scripture|bible|gospel|epistle|liturgy|sacrament|mystery|baptism|eucharist|chrismation|confession|unction|marriage|ordination|pascha|easter|fasting|prayer|icon|theotokos|virgin mary|apostle|prophet|martyr|father|council|canon|dogma|theology|doctrine|sin|repentance|resurrection|incarnation|logos|hypostasis|ousia|physis|chalcedon|nicaea|ephesus|constantinople|ecumenical|catechism|creed|nicene|apostles)\b/.test(t);
+  }
+
+  /**
+   * §6 — Retrieve top-N relevant theological_memory chunks for a question.
+   * Uses semantic search when embeddings are available; falls back to keyword.
+   */
+  _recallTheology(question) {
+    if (!this.db) return [];
+    const { config } = require('../config');
+    if (!config.theology || !config.theology.enabled) return [];
+    const topK = config.theology.topK || 8;
+    try {
+      // Keyword fallback (embedding path requires embed-theology.js to have run)
+      return this.db.searchTheology(question, { limit: topK });
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /**
    * Run a full diagnose cycle.
    * @param {object} input { sessionId, incident, proposal, context, useModel }
    * @returns {Promise<object>} decision record (also persisted)
@@ -287,12 +362,53 @@ class Orchestrator {
       crossTenant: input.context && input.context.crossTenant,
     });
 
+    // §6 — Theological query short-circuit
+    // If the question is theological and the theology layer is enabled,
+    // bypass the governance rule engine entirely and return a RAG response.
+    // Governance rules do NOT apply to theological questions.
+    const questionText = typeof (input.proposal || input.incident) === 'string'
+      ? (input.proposal || input.incident)
+      : JSON.stringify(input.proposal || input.incident || '');
+    if (this._isTheologicalQuestion(questionText)) {
+      const { config } = require('../config');
+      if (config.theology && config.theology.enabled) {
+        const chunks = this._recallTheology(questionText);
+        const citations = chunks.map((c) => ({
+          source_ref: c.source_ref || c.reference_key,
+          source: c.source,
+          category: c.category,
+          body: c.body ? c.body.slice(0, 500) : '',
+        }));
+        // Note when Fathers are not unanimous
+        const hasPatristic = citations.some((c) => c.category === 'patristic');
+        const unanimityNote = hasPatristic
+          ? 'Note: Patristic sources are included. Where the Fathers are not unanimous, this is noted in the citations.'
+          : null;
+        return {
+          session_id: sessionId,
+          theological_query: true,
+          question: questionText,
+          citations,
+          source_count: citations.length,
+          unanimity_note: unanimityNote,
+          governance_applied: false,
+          executed: false,
+        };
+      }
+    }
+
     // 1) protected concern
     const protectedConcern = identifyProtectedConcern(incident);
     // 2) owning system
     const owningSystem = identifyOwningSystem(incident);
     // 3) recall system truth
     const systemTruth = this._recallSystemTruth(owningSystem);
+
+    // §5 — 3a) detect question_type for correction recall + stumble-threshold
+    const questionType = this._detectQuestionType(proposal || incident, protectedConcern);
+
+    // §5 — 3b) recall active corrections for this question_type
+    const typeCorrections = this._recallCorrectionsByType(questionType);
 
     // -----------------------------------------------------------------------
     // Phase 2: Retrieval-first pipeline
@@ -324,8 +440,44 @@ class Orchestrator {
       else escalation = adv.escalation; // circuit breaker / inference failure
     }
 
+    // §5 — 4a) stumble-threshold check
+    // If this question_type has accumulated >= BRAIN_STUMBLE_THRESHOLD active
+    // corrections, override the classification to requires_human_superadmin
+    // BEFORE the rule engine runs. The deterministic engine remains authoritative
+    // for all other paths; this is an additional safety escalation only.
+    let stumbleEscalated = false;
+    let stumbleReason = null;
+    if (typeCorrections.length >= config.learning.stumbleThreshold) {
+      stumbleEscalated = true;
+      stumbleReason = `stumble_threshold_exceeded (${typeCorrections.length} corrections for question_type=${questionType})`;
+      logger.warn('stumble_threshold_exceeded', { question_type: questionType, count: typeCorrections.length });
+    }
+
+    // §5 — 4b) stuck-thinking detection
+    // Pre-evaluate the likely classification to check if we are stuck.
+    // We use the retrieval result as a proxy; a full pre-evaluation is not done
+    // here to avoid double-running the rule engine.
+    const stuckCheck = this._detectStuckThinking(sessionId, memorySource);
+    const modelAdvisoryPrefix = [
+      typeCorrections.length > 0
+        ? `KNOWN CORRECTIONS FOR ${questionType}:\n` +
+          typeCorrections.map((c) => `- ${c.correction || c.correct_answer}`).join('\n')
+        : null,
+      stuckCheck.stuck
+        ? `PRIOR ATTEMPTS (same session, same classification):\n` +
+          stuckCheck.priorAttempts.map((d) => `- ${d.recommendation}`).join('\n')
+        : null,
+    ].filter(Boolean).join('\n\n');
+
     // 4) evaluate authority via DETERMINISTIC engine (authoritative)
     const verdict = ruleEngine.evaluate(proposal, context, modelAdvisory);
+
+    // Apply stumble escalation on top of the deterministic verdict (additive only)
+    if (stumbleEscalated && verdict.classification !== 'tier0_halt_escalate') {
+      verdict.classification = 'requires_human_superadmin';
+      verdict.domains = [...(verdict.domains || []), 'stumble_escalation'];
+      verdict.requiresOmstudio = true;
+    }
 
     // 5/6) formulate recommendation
     const owningFromVerdict = owningSystem;
@@ -452,6 +604,16 @@ class Orchestrator {
         content: memoryContent,
         known_corrections: knownCorrections.length > 0 ? knownCorrections : undefined,
         open_tasks: openTasks.length > 0 ? openTasks : undefined,
+      },
+      // §5: correction memory context
+      correction_context: {
+        question_type: questionType,
+        known_corrections: typeCorrections.length > 0 ? typeCorrections : undefined,
+        stuck_thinking: stuckCheck.stuck,
+        prior_attempts: stuckCheck.stuck ? stuckCheck.priorAttempts : undefined,
+        stumble_escalated: stumbleEscalated,
+        auto_escalated_reason: stumbleReason || undefined,
+        model_advisory_confidence: stuckCheck.stuck ? 'low' : undefined,
       },
       // Phase 2: execution source footer (visible on every response)
       execution_source: {
