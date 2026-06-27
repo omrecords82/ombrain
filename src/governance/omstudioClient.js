@@ -1,38 +1,42 @@
 'use strict';
 
 /**
- * OMStudio governance client (Phase 1 governance-surface step).
+ * OMStudio governance client — VERIFIED CONTRACT (P2 patch).
  *
- * Emits two kinds of records to the OMStudio governance surface:
- *   (a) AUDIT events       — append-only record of every Brain decision/
- *                            recommendation, mirroring the local decision_memory
- *                            ledger. EVERY decision is audited.
- *   (b) APPROVAL requests  — for any proposal the DETERMINISTIC rule engine
- *                            classified as human-only / requires-superadmin, or
- *                            any Tier 0 escalation.
+ * Replaces the ASSUMED_PATHS block with the paths confirmed by reading:
+ *   - omai/packages/omstudio-brain-governance/src/routes/brainGovernance.js
+ *   - omai/packages/omstudio-brain-governance/README.md
+ *   - omai/packages/omstudio-brain-governance/src/util/config.js
+ *   - omai/omstudio/_runtime/server/src/index.js  (app.use mounts)
  *
- * =============================== ASSUMED INTERFACE ===========================
- * The exact OMStudio audit/approval REST contract is NOT in the provided
- * corpus. The HTTP paths and payload shapes below are an ASSUMED interface that
- * the user's team MUST confirm/adjust against the live OMStudio API before
- * enabling OMSTUDIO_TRANSPORT=http. They are deliberately isolated behind a
- * clean adapter so swapping them is a one-file change. See
- * docs/OMSTUDIO-INTEGRATION.md.
- * =============================================================================
+ * VERIFIED routing truth:
+ *   OMStudio Express app binds on .242:4070 (127.0.0.1 only).
+ *   The .242 nginx edge maps:
+ *     /omstudio-embed/api/governance/brain/*  →  127.0.0.1:4070/api/governance/brain/*
+ *   The Brain targets the edge base (OMSTUDIO_GOVERNANCE_BASE_URL), so the
+ *   /omstudio-embed prefix is correct for the Brain's outbound calls.
+ *
+ * VERIFIED inbound webhook:
+ *   OMStudio calls POST http://<auth01>:8390/governance/approvals/:id/ingest-status
+ *   (port 8390 — the Brain's confirmed default; the governance package README/config
+ *   incorrectly documented :8391; that is a bug in the package, fixed in P2).
+ *
+ * NEW in P2:
+ *   - ASSUMED_PATHS → VERIFIED_PATHS (comment updated, paths unchanged — they were correct)
+ *   - Inbound webhook-secret validation helper (validateWebhookSecret)
+ *   - OMSTUDIO_WEBHOOK_SECRET env var wired into Brain server.js (see server.js patch)
+ *   - getApprovalStatus now returns the full history array from the polling response
+ *   - Polling fallback: if state is null (terminal or unknown), logs a warning
  *
  * Adapter interface (stable; transports are swappable):
- *   - emitAuditEvent(record)        -> { ok, ref, transport }
- *   - submitApprovalRequest(proposal) -> { ok, ref, transport }
- *   - getApprovalStatus(ref)        -> { ok, state|null, raw }
+ *   - emitAuditEvent(record)           -> { ok, ref, transport }
+ *   - submitApprovalRequest(proposal)  -> { ok, ref, transport }
+ *   - getApprovalStatus(ref)           -> { ok, state|null, history, raw }
  *
- * Doctrine guarantees enforced here:
- *   - LAN/allowed-host ONLY: the OMStudio base URL is checked by the circuit
- *     breaker; external hosts are refused (no egress to the public internet).
- *   - REDACT BEFORE EGRESS: every outbound payload passes through redactForLog
- *     so no never-log secret (incl. OMSTUDIO_SERVICE_TOKEN) or tenant identifier
- *     (church_id / om_church_*) is ever transmitted.
- *   - The service token is read from env and attached as a bearer header ONLY;
- *     it is never placed in a payload and never logged.
+ * Doctrine guarantees (unchanged):
+ *   - LAN/allowed-host ONLY: circuit breaker refuses external hosts.
+ *   - REDACT BEFORE EGRESS: every outbound payload passes through redactForLog.
+ *   - Service token is Bearer-header only; never in payload, never logged.
  */
 
 const fs = require('fs');
@@ -41,13 +45,20 @@ const breaker = require('../ai/circuitBreaker');
 const { redactForLog } = require('../ai/redactor');
 const logger = require('../util/logger');
 
-// ---- ASSUMED OMStudio REST paths (confirm against live API) ----------------
-const ASSUMED_PATHS = Object.freeze({
-  // Mounted under the .242 edge / omstudio-embed front per routing truth.
-  audit: '/omstudio-embed/api/governance/brain/audit-events',
-  approvals: '/omstudio-embed/api/governance/brain/approval-requests',
+// ---- VERIFIED OMStudio REST paths -------------------------------------------
+// Source: omai/packages/omstudio-brain-governance/src/routes/brainGovernance.js
+// Edge:   .242 nginx maps /omstudio-embed/api/governance/brain/* → :4070/api/governance/brain/*
+// The Brain targets the edge base, so these /omstudio-embed-prefixed paths are correct.
+const VERIFIED_PATHS = Object.freeze({
+  audit:          '/omstudio-embed/api/governance/brain/audit-events',
+  approvals:      '/omstudio-embed/api/governance/brain/approval-requests',
   approvalStatus: '/omstudio-embed/api/governance/brain/approval-requests/:ref',
+  health:         '/omstudio-embed/api/governance/brain/health',
 });
+
+// Keep the old export name so existing code that imports ASSUMED_PATHS still works.
+// Callers should migrate to VERIFIED_PATHS.
+const ASSUMED_PATHS = VERIFIED_PATHS;
 
 class OmstudioClient {
   /**
@@ -68,13 +79,11 @@ class OmstudioClient {
     this.production = !!opts.production;
     this.http = opts.httpImpl || globalThis.fetch;
     this.now = opts.now || (() => new Date());
-    this.paths = ASSUMED_PATHS;
+    this.paths = VERIFIED_PATHS;
   }
 
   /**
-   * Circuit-breaker check for the configured OMStudio base URL. In dry-run we
-   * still validate so misconfiguration is caught early, but an empty base URL is
-   * acceptable in dry-run (records go to the local outbox).
+   * Circuit-breaker check for the configured OMStudio base URL.
    * @returns {{ allowed: boolean, reason: string, host: string }}
    */
   checkEndpoint() {
@@ -95,16 +104,18 @@ class OmstudioClient {
   }
 
   /**
-   * Write a record to the dry-run outbox (one JSON file per record) AND return a
-   * stable ref. Payload is assumed already redacted by the caller; we redact
-   * again defensively.
+   * Write a record to the dry-run outbox (one JSON file per record).
+   * Payload is assumed already redacted by the caller; we redact again defensively.
    */
   _writeOutbox(kind, payload) {
     this._ensureOutbox();
     const ref = this._ref(kind);
     const safe = redactForLog(payload);
     const file = path.join(this.outboxDir, ref + '.json');
-    fs.writeFileSync(file, JSON.stringify({ kind, ref, written_at: this.now().toISOString(), payload: safe }, null, 2));
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ kind, ref, written_at: this.now().toISOString(), payload: safe }, null, 2),
+    );
     return { ref, file, safe };
   }
 
@@ -131,8 +142,7 @@ class OmstudioClient {
     let body;
     if (bodyObj !== undefined) {
       headers['Content-Type'] = 'application/json';
-      // REDACT BEFORE EGRESS.
-      body = JSON.stringify(redactForLog(bodyObj));
+      body = JSON.stringify(redactForLog(bodyObj)); // REDACT BEFORE EGRESS
     }
     const res = await this.http(url, { method, headers, body });
     const text = await res.text();
@@ -151,12 +161,18 @@ class OmstudioClient {
     return new URL(p, this.baseUrl).toString();
   }
 
-  // -------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
   // (a) AUDIT EVENT
-  // -------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
   /**
    * Emit an audit event mirroring a decision. `record` is the decision-shaped
    * object; it is redacted before egress.
+   *
+   * Verified endpoint: POST /omstudio-embed/api/governance/brain/audit-events
+   * Auth:              Authorization: Bearer <OMSTUDIO_SERVICE_TOKEN>
+   *                    (scope: write:brain-audit)
+   * Response:          { id, ref, received_at }  HTTP 201
+   *
    * @returns {Promise<{ok:boolean, ref:string|null, transport:string, blocked?:boolean, reason?:string}>}
    */
   async emitAuditEvent(record) {
@@ -187,13 +203,24 @@ class OmstudioClient {
     }
   }
 
-  // -------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
   // (b) APPROVAL REQUEST
-  // -------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
   /**
-   * Submit an approval request. `proposal` is the approval-shaped object
-   * (classification, domains, redacted summary, source_decision_id, session_id).
-   * It is redacted before egress.
+   * Submit an approval request.
+   *
+   * Verified endpoint: POST /omstudio-embed/api/governance/brain/approval-requests
+   * Auth:              Authorization: Bearer <OMSTUDIO_SERVICE_TOKEN>
+   *                    (scope: write:brain-approvals)
+   * Request body:      { type, submitted_at, request: { approval_local_id, source_decision_id,
+   *                      session_id, classification, domains, proposal_summary } }
+   * Response:          { id, ref, state: 'SUBMITTED' }  HTTP 201
+   *
+   * The returned `ref` is the OMStudio approval ref. The Brain stores it as
+   * `omstudio_ref` in the local approval record so the inbound webhook can
+   * correlate the decision back to the correct local approval.
+   *
+   * @returns {Promise<{ok:boolean, ref:string|null, transport:string}>}
    */
   async submitApprovalRequest(proposal) {
     const payload = redactForLog({
@@ -211,7 +238,7 @@ class OmstudioClient {
     try {
       const r = await this._httpSend('POST', this._url(this.paths.approvals), payload);
       const ref = (r.json && (r.json.ref || r.json.id)) || null;
-      logger.info('omstudio_approval_http', { status: r.status, ok: r.ok });
+      logger.info('omstudio_approval_http', { status: r.status, ok: r.ok, ref });
       return { ok: r.ok, ref, transport: 'http' };
     } catch (e) {
       if (e.code === 'CIRCUIT_BREAKER') {
@@ -223,30 +250,76 @@ class OmstudioClient {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // (c) APPROVAL STATUS POLL (fallback — primary path is the inbound webhook)
+  // ---------------------------------------------------------------------------
   /**
-   * Poll OMStudio for the current status of an approval request.
-   * In dry-run there is no remote status to poll (decisions arrive via the
-   * ingest-status endpoint / outbox simulation), so returns state: null.
+   * Poll OMStudio for the current state + history of an approval request.
+   *
+   * Verified endpoint: GET /omstudio-embed/api/governance/brain/approval-requests/:ref
+   * Auth:              Authorization: Bearer <OMSTUDIO_SERVICE_TOKEN>
+   * Response:          { ref, state, history: [...] }
+   *
+   * In dry-run there is no remote state to poll (decisions arrive via the
+   * ingest-status webhook), so returns state: null.
+   *
+   * @returns {Promise<{ok:boolean, state:string|null, history:Array, raw:object}>}
    */
   async getApprovalStatus(ref) {
     if (this.transport === 'dryrun') {
-      return { ok: true, state: null, raw: { note: 'dryrun: status arrives via ingest-status endpoint' } };
+      return {
+        ok: true,
+        state: null,
+        history: [],
+        raw: { note: 'dryrun: status arrives via ingest-status webhook' },
+      };
     }
     try {
       const r = await this._httpSend('GET', this._url(this.paths.approvalStatus, ref));
-      const state = r.json && (r.json.state || r.json.status) ? String(r.json.state || r.json.status) : null;
-      return { ok: r.ok, state, raw: redactForLog(r.json) };
+      const state = r.json && r.json.state ? String(r.json.state) : null;
+      const history = (r.json && Array.isArray(r.json.history)) ? r.json.history : [];
+      if (r.ok && !state) {
+        logger.warn('omstudio_approval_poll_no_state', { ref });
+      }
+      return { ok: r.ok, state, history, raw: redactForLog(r.json) };
     } catch (e) {
       if (e.code === 'CIRCUIT_BREAKER') {
-        return { ok: false, state: null, blocked: true, reason: e.verdict.reason };
+        return { ok: false, state: null, history: [], blocked: true, reason: e.verdict.reason };
       }
-      return { ok: false, state: null, reason: 'transport_error' };
+      return { ok: false, state: null, history: [], reason: 'transport_error' };
     }
   }
 
-  // -------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // (d) GOVERNANCE HEALTH CHECK
+  // ---------------------------------------------------------------------------
+  /**
+   * Ping the OMStudio governance surface. Useful for startup checks and auditor
+   * loop health assertions.
+   *
+   * Verified endpoint: GET /omstudio-embed/api/governance/brain/health
+   * Auth:              none (unauthenticated liveness)
+   *
+   * @returns {Promise<{ok:boolean, transport:string}>}
+   */
+  async checkGovernanceHealth() {
+    if (this.transport === 'dryrun') {
+      return { ok: true, transport: 'dryrun' };
+    }
+    try {
+      const r = await this._httpSend('GET', this._url(this.paths.health));
+      return { ok: r.ok, transport: 'http', status: r.status };
+    } catch (e) {
+      if (e.code === 'CIRCUIT_BREAKER') {
+        return { ok: false, transport: 'http', blocked: true, reason: e.verdict.reason };
+      }
+      return { ok: false, transport: 'http', reason: 'transport_error' };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Query poll surface (Phase 10) — pending user queries from OMStudio
-  // -------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
 
   async fetchPendingQueries(_limit = 10) {
     if (this.transport === 'dryrun') return [];
@@ -268,4 +341,38 @@ class OmstudioClient {
   }
 }
 
-module.exports = { OmstudioClient, ASSUMED_PATHS };
+// ---------------------------------------------------------------------------
+// Inbound webhook-secret validation (used by server.js ingest-status endpoint)
+// ---------------------------------------------------------------------------
+/**
+ * Validate the X-OM-Webhook-Secret header on an inbound OMStudio webhook call.
+ *
+ * The secret is configured via OMSTUDIO_WEBHOOK_SECRET env var on the Brain.
+ * If the env var is empty, validation is skipped (development/dry-run mode).
+ *
+ * @param {string} headerValue   value of req.headers['x-om-webhook-secret']
+ * @param {string} configSecret  process.env.OMSTUDIO_WEBHOOK_SECRET
+ * @returns {{ ok: boolean, reason: string }}
+ */
+function validateWebhookSecret(headerValue, configSecret) {
+  if (!configSecret) {
+    // No secret configured — skip validation (dev/dry-run).
+    return { ok: true, reason: 'no_secret_configured' };
+  }
+  if (!headerValue) {
+    return { ok: false, reason: 'missing_webhook_secret' };
+  }
+  // Constant-time comparison to prevent timing attacks.
+  const a = Buffer.from(String(headerValue));
+  const b = Buffer.from(String(configSecret));
+  if (a.length !== b.length) {
+    return { ok: false, reason: 'invalid_webhook_secret' };
+  }
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0
+    ? { ok: true, reason: 'ok' }
+    : { ok: false, reason: 'invalid_webhook_secret' };
+}
+
+module.exports = { OmstudioClient, VERIFIED_PATHS, ASSUMED_PATHS, validateWebhookSecret };

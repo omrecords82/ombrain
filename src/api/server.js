@@ -20,6 +20,7 @@ const { config } = require('../config');
 const breaker = require('../ai/circuitBreaker');
 const { redactForLog } = require('../ai/redactor');
 const logger = require('../util/logger');
+const { validateWebhookSecret } = require('../governance/omstudioClient');
 
 // ---------------------------------------------------------------------------
 // Calendar helpers (loaded lazily to avoid startup errors if module is absent)
@@ -141,8 +142,31 @@ function createServer(deps = {}) {
     return res.json({ approval: redactForLog(row), history: redactForLog(history) });
   });
 
+  app.get('/governance/approvals/:id/history', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const id = Number(req.params.id);
+    const row = db.getApprovalRequest(id);
+    if (!row) return res.status(404).json({ ok: false, error: 'approval_not_found' });
+    const history = db.approvalHistory(id);
+    return res.json({ approval_id: id, count: history.length, history: redactForLog(history) });
+  });
+
   app.post('/governance/approvals/:id/ingest-status', (req, res) => {
     if (!governance) return res.status(503).json({ ok: false, error: 'no_governance' });
+
+    const webhookSecret = process.env.OMSTUDIO_WEBHOOK_SECRET || '';
+    const secretCheck = validateWebhookSecret(
+      req.headers['x-om-webhook-secret'] || '',
+      webhookSecret,
+    );
+    if (!secretCheck.ok) {
+      logger.warn('ingest_status_webhook_secret_rejected', {
+        reason: secretCheck.reason,
+        approval_id: req.params.id,
+      });
+      return res.status(401).json({ ok: false, error: secretCheck.reason });
+    }
+
     const body = req.body || {};
     const source = body.source === 'dryrun_sim' ? 'dryrun_sim' : 'omstudio_ingest';
     const out = governance.ingestStatus(Number(req.params.id), {
@@ -155,6 +179,12 @@ function createServer(deps = {}) {
       const code = out.reason === 'approval_not_found' ? 404 : 400;
       return res.status(code).json({ ok: false, error: out.reason, from: out.from, to: out.to });
     }
+    logger.info('ingest_status_applied', {
+      approval_id: req.params.id,
+      from: out.from,
+      to: out.to,
+      source,
+    });
     return res.json({ ok: true, from: out.from, to: out.to, state: out.state });
   });
 
@@ -162,6 +192,22 @@ function createServer(deps = {}) {
     const limit = Math.min(Number(req.query.limit) || 100, 1000);
     const rows = db ? db.listOmstudioAudit(limit) : [];
     res.json({ count: rows.length, audit: redactForLog(rows) });
+  });
+
+  app.get('/governance/health', (req, res) => {
+    const omstudioBaseUrl = config.omstudio ? config.omstudio.governanceBaseUrl : '';
+    const verdict = omstudioBaseUrl
+      ? breaker.checkHost(omstudioBaseUrl, { production: config.isProduction })
+      : { allowed: false, reason: 'no_base_url_configured' };
+    const webhookSecretConfigured = !!(process.env.OMSTUDIO_WEBHOOK_SECRET || '');
+    res.json({
+      ok: true,
+      transport: (config.omstudio && config.omstudio.transport) || 'dryrun',
+      omstudio_base_url_allowed: verdict.allowed,
+      omstudio_base_url_reason: verdict.reason,
+      webhook_secret_configured: webhookSecretConfigured,
+      outbox_dir: (config.omstudio && config.omstudio.outboxDir) || './data/omstudio-outbox',
+    });
   });
 
   // -------------------------------------------------------------------------
