@@ -1,7 +1,7 @@
 model_list:
   - model_name: brain-reasoning
     litellm_params:
-      model: openrouter/anthropic/claude-3-5-sonnet-20241022
+      model: openrouter/anthropic/claude-sonnet-4.6
       api_key: os.environ/OPENROUTER_API_KEY
       api_base: https://openrouter.ai/api/v1
   - model_name: brain-classifier
