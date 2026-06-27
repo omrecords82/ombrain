@@ -23,6 +23,15 @@ const fs   = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+// Load production env when seeding on om-dev (avoids writing to ./data/brain.db).
+const prodEnv = '/etc/om-brain/om-brain.env';
+if (!process.env.BRAIN_DB_PATH && fs.existsSync(prodEnv)) {
+  for (const line of fs.readFileSync(prodEnv, 'utf8').split('\n')) {
+    const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (m && process.env[m[1]] == null) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+  }
+}
+
 const { config }   = require('../src/config');
 const { MemoryDB } = require('../src/memory/db');
 
