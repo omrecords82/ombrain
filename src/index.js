@@ -17,6 +17,9 @@ const { GovernanceManager } = require('./governance/governanceManager');
 const { EventAdapter } = require('./adapters/eventAdapter');
 const { InventoryAdapter } = require('./adapters/inventoryAdapter');
 const { LogAdapter } = require('./adapters/logAdapter');
+const { AuditorLoop } = require('./auditor/auditorLoop');
+const { CronManager } = require('./cron/cronManager');
+const { QueryPipeline } = require('./queryPipeline/pipeline');
 const { createServer } = require('./api/server');
 const logger = require('./util/logger');
 
@@ -31,9 +34,6 @@ function main() {
 
   const aiClient = new BrainAIClient();
 
-  // OMStudio governance surface (audit + approval). Defaults to dry-run so the
-  // Brain runs safely with no live OMStudio. The base URL is LAN-only enforced
-  // by the circuit breaker inside the client when transport=http.
   const omstudio = new OmstudioClient({
     baseUrl: config.omstudio.governanceBaseUrl,
     serviceToken: config.omstudio.serviceToken,
@@ -46,13 +46,23 @@ function main() {
 
   const orchestrator = new Orchestrator({ db, aiClient, governance });
 
-  // Read-only ingestion adapters (disabled by default via env).
   const eventAdapter = new EventAdapter({ db });
   const inventoryAdapter = new InventoryAdapter({ db, governance });
   const logAdapter = new LogAdapter({ db });
   eventAdapter.start();
   inventoryAdapter.start();
   logAdapter.start();
+
+  const auditor = new AuditorLoop({ db, orchestrator });
+  auditor.start();
+
+  const pipeline = new QueryPipeline({
+    omstudioClient: omstudio,
+    orchestrator: { ask: (q) => orchestrator.ask(q) },
+    logger,
+  });
+  const cron = new CronManager({ pipeline });
+  cron.start();
 
   const app = createServer({ db, orchestrator, governance });
   const server = app.listen(config.http.port, config.http.host, () => {
@@ -61,6 +71,8 @@ function main() {
 
   const shutdown = () => {
     logger.info('brain_shutdown');
+    cron.stop();
+    auditor.stop();
     eventAdapter.stop();
     inventoryAdapter.stop();
     logAdapter.stop();

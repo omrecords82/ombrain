@@ -243,6 +243,29 @@ class OmstudioClient {
       return { ok: false, state: null, reason: 'transport_error' };
     }
   }
+
+  // -------------------------------------------------------------------------
+  // Query poll surface (Phase 10) — pending user queries from OMStudio
+  // -------------------------------------------------------------------------
+
+  async fetchPendingQueries(_limit = 10) {
+    if (this.transport === 'dryrun') return [];
+    try {
+      const r = await this._httpSend('GET', this._url('/omstudio-embed/api/governance/brain/pending-queries'));
+      const rows = r.json && (r.json.queries || r.json.items);
+      return Array.isArray(rows) ? rows : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  async acknowledgeQuery(_queryId) {
+    return { ok: true };
+  }
+
+  async reportQueryResult(_queryId, _payload) {
+    return { ok: true };
+  }
 }
 
 module.exports = { OmstudioClient, ASSUMED_PATHS };

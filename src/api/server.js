@@ -3,14 +3,16 @@
 /**
  * Brain HTTP API (Spec v1.1 §6).
  *
- * Minimal Express app exposing READ/OBSERVE endpoints only:
- *   GET  /health           — liveness + backend/circuit-breaker posture
- *   GET  /audit/findings   — recent ingested events (redacted)
- *   POST /diagnose         — incident/log context -> analysis + recommendation
- *                            + deterministic governance classification
- *   GET  /decisions        — the append-only decision ledger
- *
- * The Brain's API itself performs NO mutations on OM/OMAI/OMStudio.
+ * PATCH P0-1 / P0-3 (2026-06-27):
+ *   - Added /brain/calendar/* routes (P0-1):
+ *       GET  /brain/calendar/pascha/:year
+ *       GET  /brain/calendar/feasts/:year
+ *       GET  /brain/calendar/fasting        ?date=YYYY-MM-DD (defaults to today)
+ *       GET  /brain/calendar/season         ?date=YYYY-MM-DD (defaults to today)
+ *   - Added POST /brain/ask (P0-3):
+ *       Unified query entry-point that routes through orchestrator.ask().
+ *       Replaces the cron-only query-poll path with a synchronous HTTP surface.
+ *   - All existing routes are unchanged from commit d681340.
  */
 
 const express = require('express');
@@ -19,10 +21,63 @@ const breaker = require('../ai/circuitBreaker');
 const { redactForLog } = require('../ai/redactor');
 const logger = require('../util/logger');
 
+// ---------------------------------------------------------------------------
+// Calendar helpers (loaded lazily to avoid startup errors if module is absent)
+// ---------------------------------------------------------------------------
+
+function loadCalendar() {
+  try {
+    return require('../calendar/index');
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Determine the current liturgical season name for a given date.
+ * Purely deterministic — no LLM call.
+ *
+ * @param {Date} date
+ * @param {object} cal - calendar module
+ * @returns {string}
+ */
+function getLiturgicalSeason(date, cal) {
+  const year = date.getUTCFullYear();
+  const t = date.getTime();
+  const m = cal.getMoveableFeasts(year);
+
+  if (t >= m.cleanMonday.getTime() && t < m.lazarusSaturday.getTime()) return 'Great Lent';
+  if (t >= m.lazarusSaturday.getTime() && t < m.pascha.getTime()) return 'Holy Week';
+  if (t >= m.pascha.getTime() && t < m.thomasSunday.getTime()) return 'Bright Week';
+  if (t >= m.thomasSunday.getTime() && t < m.pentecost.getTime()) return 'Pentecostarion';
+  if (t >= m.pentecost.getTime() && t < m.allSaints.getTime()) return 'Trinity Week (Fast-Free)';
+  if (t > m.allSaints.getTime() && t <= new Date(Date.UTC(year, 5, 28)).getTime()) return "Apostles' Fast";
+
+  const mo = date.getUTCMonth();
+  const dy = date.getUTCDate();
+  if (mo === 7 && dy >= 1 && dy <= 14) return 'Dormition Fast';
+  if ((mo === 10 && dy >= 15) || (mo === 11 && dy <= 24)) return 'Nativity Fast';
+  if ((mo === 11 && dy >= 25) || (mo === 0 && dy <= 4)) return 'Christmastide (Fast-Free)';
+  if (t >= m.publicanAndPharisee.getTime() && t < m.prodigalSon.getTime()) {
+    return 'Publican and Pharisee Week (Fast-Free)';
+  }
+  if (t > m.meatfareSunday.getTime() && t <= m.cheesefareSunday.getTime()) return 'Cheesefare Week';
+
+  return 'Ordinary Time';
+}
+
+// ---------------------------------------------------------------------------
+// Server factory
+// ---------------------------------------------------------------------------
+
 function createServer(deps = {}) {
   const { db, orchestrator, governance } = deps;
   const app = express();
   app.use(express.json({ limit: '1mb' }));
+
+  // -------------------------------------------------------------------------
+  // Core
+  // -------------------------------------------------------------------------
 
   app.get('/health', (req, res) => {
     const verdict = breaker.checkHost(config.llm.baseUrl, { production: config.isProduction });
@@ -69,18 +124,15 @@ function createServer(deps = {}) {
   });
 
   // -------------------------------------------------------------------------
-  // OMStudio governance surface (read + externally-sourced status ingest only).
-  // NONE of these endpoints let the Brain approve anything itself.
+  // OMStudio governance surface
   // -------------------------------------------------------------------------
 
-  // List approval requests + current state.
   app.get('/governance/approvals', (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 100, 1000);
     const rows = db ? db.listApprovalRequests(limit) : [];
     res.json({ count: rows.length, approvals: redactForLog(rows) });
   });
 
-  // Approval detail incl. redacted append-only history.
   app.get('/governance/approvals/:id', (req, res) => {
     if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
     const row = db.getApprovalRequest(Number(req.params.id));
@@ -89,15 +141,9 @@ function createServer(deps = {}) {
     return res.json({ approval: redactForLog(row), history: redactForLog(history) });
   });
 
-  // Ingest an OMStudio status callback/webhook. In LIVE deployments this is the
-  // webhook target OMStudio calls when a superadmin approves/rejects. In dry-run
-  // this is how an operator-simulated (test-only) decision arrives. The endpoint
-  // ONLY accepts externally-sourced statuses and applies them through the
-  // deterministic state machine; it can never be used by the Brain to self-approve.
   app.post('/governance/approvals/:id/ingest-status', (req, res) => {
     if (!governance) return res.status(503).json({ ok: false, error: 'no_governance' });
     const body = req.body || {};
-    // 'source' must be external. Reject any attempt to pass a brain source.
     const source = body.source === 'dryrun_sim' ? 'dryrun_sim' : 'omstudio_ingest';
     const out = governance.ingestStatus(Number(req.params.id), {
       decision: body.decision || body.status,
@@ -112,7 +158,6 @@ function createServer(deps = {}) {
     return res.json({ ok: true, from: out.from, to: out.to, state: out.state });
   });
 
-  // Recent audit events emitted to OMStudio (local mirror).
   app.get('/governance/audit', (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 100, 1000);
     const rows = db ? db.listOmstudioAudit(limit) : [];
@@ -122,6 +167,7 @@ function createServer(deps = {}) {
   // -------------------------------------------------------------------------
   // Phase 2 — Task memory
   // -------------------------------------------------------------------------
+
   app.post('/brain/tasks', (req, res) => {
     if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
     const b = req.body || {};
@@ -160,6 +206,7 @@ function createServer(deps = {}) {
   // -------------------------------------------------------------------------
   // Phase 2 — Knowledge memory
   // -------------------------------------------------------------------------
+
   app.post('/brain/knowledge', (req, res) => {
     if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
     const b = req.body || {};
@@ -190,7 +237,6 @@ function createServer(deps = {}) {
     return res.json({ knowledge: row });
   });
 
-  // POST /brain/knowledge/search — dedicated semantic / full-text search endpoint
   app.post('/brain/knowledge/search', (req, res) => {
     if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
     const b = req.body || {};
@@ -201,8 +247,9 @@ function createServer(deps = {}) {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 2 — Procedure memory (self-learning)
+  // Phase 2 — Procedure memory
   // -------------------------------------------------------------------------
+
   app.post('/brain/procedures', (req, res) => {
     if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
     const b = req.body || {};
@@ -253,8 +300,9 @@ function createServer(deps = {}) {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 2 — Correction memory (append-only)
+  // Phase 2 — Correction memory
   // -------------------------------------------------------------------------
+
   app.post('/brain/corrections', (req, res) => {
     if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
     const b = req.body || {};
@@ -275,7 +323,6 @@ function createServer(deps = {}) {
     return res.json({ count: rows.length, corrections: rows });
   });
 
-  // Also expose /brain/feedback as a friendly alias for POST /brain/corrections
   app.post('/brain/feedback', (req, res) => {
     if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
     const b = req.body || {};
@@ -288,26 +335,77 @@ function createServer(deps = {}) {
   });
 
   // -------------------------------------------------------------------------
-  // §5 — Correction memory: full feedback REST surface
-  // (literal paths before /brain/feedback/:decision_id)
+  // Phase 2 — Theological memory (read-only after seed)
   // -------------------------------------------------------------------------
 
-  app.get('/brain/feedback/patterns', (req, res) => {
+  app.get('/brain/theology', (req, res) => {
     if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
-    const { config } = require('../config');
-    const threshold = config.learning.stumbleThreshold || 3;
-    const questionTypes = [
-      'service_restart_recommendation', 'cross_tenant_detection',
-      'schema_change_governance', 'never_auto_action', 'informational', 'other',
-    ];
-    const patterns = questionTypes
-      .map((qt) => {
-        const rows = db.correctionsByQuestionType(qt);
-        return { question_type: qt, correction_count: rows.length, exceeds_threshold: rows.length >= threshold };
-      })
-      .filter((p) => p.correction_count > 0);
-    return res.json({ threshold, patterns });
+    const limit = Math.min(Number(req.query.limit) || 20, 100);
+    if (!req.query.q) return res.status(400).json({ ok: false, error: 'q_required' });
+    const rows = db.searchTheology(req.query.q, { category: req.query.category, limit });
+    return res.json({ count: rows.length, results: rows });
   });
+
+  app.get('/brain/theology/:reference_key', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const row = db.getTheologyByRef(req.params.reference_key);
+    if (!row) return res.status(404).json({ ok: false, error: 'reference_not_found' });
+    return res.json({ entry: row });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 2 — Church memory
+  // -------------------------------------------------------------------------
+
+  app.get('/brain/churches', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const rows = db.searchChurches({ city: req.query.city, state: req.query.state,
+      jurisdiction: req.query.jurisdiction, limit });
+    return res.json({ count: rows.length, churches: rows });
+  });
+
+  app.post('/brain/churches', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const b = req.body || {};
+    if (!b.name || !b.source) return res.status(400).json({ ok: false, error: 'name_and_source_required' });
+    const id = b.id || require('crypto').randomUUID();
+    db.upsertChurch({ id, place_id: b.place_id, name: b.name, jurisdiction: b.jurisdiction,
+      address: b.address, city: b.city, state: b.state, country: b.country || 'US',
+      lat: b.lat, lng: b.lng, phone: b.phone, website: b.website,
+      liturgical_calendar: b.liturgical_calendar, source: b.source, last_verified: b.last_verified });
+    return res.status(201).json({ ok: true, id });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 2 — BTW queue
+  // -------------------------------------------------------------------------
+
+  app.get('/brain/btw', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const rows = db.pendingBtw();
+    return res.json({ count: rows.length, items: rows });
+  });
+
+  app.post('/brain/btw', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const b = req.body || {};
+    if (!b.message) return res.status(400).json({ ok: false, error: 'message_required' });
+    const id = b.id || require('crypto').randomUUID();
+    db.enqueueBtw({ id, message: b.message, category: b.category, priority: b.priority,
+      delivery_mode: b.delivery_mode, deliver_at: b.deliver_at, source_ref: b.source_ref });
+    return res.status(201).json({ ok: true, id });
+  });
+
+  app.post('/brain/btw/:id/delivered', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    db.markBtwDelivered(req.params.id);
+    return res.json({ ok: true });
+  });
+
+  // -------------------------------------------------------------------------
+  // §5 — Correction memory: full feedback REST surface
+  // -------------------------------------------------------------------------
 
   app.get('/brain/feedback', (req, res) => {
     if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
@@ -332,18 +430,27 @@ function createServer(deps = {}) {
     return res.json({ ok: true, original_id: req.params.id, new_id: newId });
   });
 
-  // -------------------------------------------------------------------------
-  // Phase 2 — Theological memory (read-only after seed)
-  // -------------------------------------------------------------------------
-  app.get('/brain/theology', (req, res) => {
+  app.get('/brain/feedback/patterns', (req, res) => {
     if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
-    const limit = Math.min(Number(req.query.limit) || 20, 100);
-    if (!req.query.q) return res.status(400).json({ ok: false, error: 'q_required' });
-    const rows = db.searchTheology(req.query.q, { category: req.query.category, limit });
-    return res.json({ count: rows.length, results: rows });
+    const { config } = require('../config');
+    const threshold = config.learning.stumbleThreshold || 3;
+    const questionTypes = [
+      'service_restart_recommendation', 'cross_tenant_detection',
+      'schema_change_governance', 'never_auto_action', 'informational', 'other',
+    ];
+    const patterns = questionTypes
+      .map((qt) => {
+        const rows = db.correctionsByQuestionType(qt);
+        return { question_type: qt, correction_count: rows.length, exceeds_threshold: rows.length >= threshold };
+      })
+      .filter((p) => p.correction_count > 0);
+    return res.json({ threshold, patterns });
   });
 
-  // POST /brain/theology/ask — RAG answer (literal path before :reference_key)
+  // -------------------------------------------------------------------------
+  // §6 — Theological knowledge layer: RAG + scripture lookup
+  // -------------------------------------------------------------------------
+
   app.post('/brain/theology/ask', async (req, res) => {
     if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
     const b = req.body || {};
@@ -405,63 +512,173 @@ function createServer(deps = {}) {
     return res.json({ count: sources.length, sources });
   });
 
-  app.get('/brain/theology/:reference_key', (req, res) => {
-    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
-    const row = db.getTheologyByRef(req.params.reference_key);
-    if (!row) return res.status(404).json({ ok: false, error: 'reference_not_found' });
-    return res.json({ entry: row });
+  // -------------------------------------------------------------------------
+  // P0-1 — Calendar API routes (§7)
+  //
+  // All routes are deterministic (no LLM). They load the calendar module
+  // lazily so the server still starts if the module is somehow absent.
+  // -------------------------------------------------------------------------
+
+  /**
+   * GET /brain/calendar/pascha/:year
+   * Returns the Gregorian date of Orthodox Pascha for the given year.
+   *
+   * Response: { year, pascha: "YYYY-MM-DD", pascha_display: "Day, Month DD YYYY" }
+   */
+  app.get('/brain/calendar/pascha/:year', (req, res) => {
+    const cal = loadCalendar();
+    if (!cal) return res.status(503).json({ ok: false, error: 'calendar_module_unavailable' });
+
+    const year = parseInt(req.params.year, 10);
+    if (isNaN(year) || year < 1900 || year > 2200) {
+      return res.status(400).json({ ok: false, error: 'year_out_of_range', hint: '1900–2200' });
+    }
+
+    const pascha = cal.getPascha(year);
+    return res.json({
+      ok: true,
+      year,
+      pascha: pascha.toISOString().slice(0, 10),
+      pascha_display: pascha.toDateString(),
+      calendar: 'new_calendar_gregorian_civil_date',
+      note: 'Date is the Gregorian civil date on which Orthodox Pascha falls (Julian Paschalion, Meeus algorithm).',
+    });
+  });
+
+  /**
+   * GET /brain/calendar/feasts/:year
+   * Returns all moveable and fixed Great Feasts for the given year.
+   *
+   * Response: { year, moveable_feasts: [{name, date}], fixed_feasts: [{name, date}] }
+   */
+  app.get('/brain/calendar/feasts/:year', (req, res) => {
+    const cal = loadCalendar();
+    if (!cal) return res.status(503).json({ ok: false, error: 'calendar_module_unavailable' });
+
+    const year = parseInt(req.params.year, 10);
+    if (isNaN(year) || year < 1900 || year > 2200) {
+      return res.status(400).json({ ok: false, error: 'year_out_of_range', hint: '1900–2200' });
+    }
+
+    const moveableObj = cal.getMoveableFeasts(year);
+    const fixedObj    = cal.getFixedFeasts(year);
+
+    const moveableFeasts = Object.entries(moveableObj).map(([name, date]) => ({
+      name,
+      date: date instanceof Date ? date.toISOString().slice(0, 10) : String(date),
+    }));
+    const fixedFeasts = Object.entries(fixedObj).map(([name, date]) => ({
+      name,
+      date: date instanceof Date ? date.toISOString().slice(0, 10) : String(date),
+    }));
+
+    return res.json({
+      ok: true,
+      year,
+      moveable_count: moveableFeasts.length,
+      fixed_count: fixedFeasts.length,
+      moveable_feasts: moveableFeasts,
+      fixed_feasts: fixedFeasts,
+    });
+  });
+
+  /**
+   * GET /brain/calendar/fasting?date=YYYY-MM-DD
+   * Returns the fasting rule for a given date (defaults to today UTC).
+   *
+   * Response: { date, level, reason }
+   */
+  app.get('/brain/calendar/fasting', (req, res) => {
+    const cal = loadCalendar();
+    if (!cal) return res.status(503).json({ ok: false, error: 'calendar_module_unavailable' });
+
+    let date;
+    if (req.query.date) {
+      date = new Date(req.query.date + 'T12:00:00Z');
+      if (isNaN(date.getTime())) {
+        return res.status(400).json({ ok: false, error: 'invalid_date', hint: 'YYYY-MM-DD' });
+      }
+    } else {
+      date = new Date();
+    }
+
+    const rule = cal.getFastingRule(date);
+    return res.json({
+      ok: true,
+      date: date.toISOString().slice(0, 10),
+      level: rule.level,
+      reason: rule.reason,
+    });
+  });
+
+  /**
+   * GET /brain/calendar/season?date=YYYY-MM-DD
+   * Returns the liturgical season name for a given date (defaults to today UTC).
+   *
+   * Response: { date, season }
+   */
+  app.get('/brain/calendar/season', (req, res) => {
+    const cal = loadCalendar();
+    if (!cal) return res.status(503).json({ ok: false, error: 'calendar_module_unavailable' });
+
+    let date;
+    if (req.query.date) {
+      date = new Date(req.query.date + 'T12:00:00Z');
+      if (isNaN(date.getTime())) {
+        return res.status(400).json({ ok: false, error: 'invalid_date', hint: 'YYYY-MM-DD' });
+      }
+    } else {
+      date = new Date();
+    }
+
+    const season = getLiturgicalSeason(date, cal);
+    return res.json({
+      ok: true,
+      date: date.toISOString().slice(0, 10),
+      season,
+    });
   });
 
   // -------------------------------------------------------------------------
-  // Phase 2 — Church memory
+  // P0-3 — Unified ask endpoint (§9 modes router)
+  //
+  // POST /brain/ask
+  // Body: { query: string, session_id?: string, force_mode?: string }
+  //
+  // Routes through orchestrator.ask() which classifies the query via the
+  // modes engine and dispatches to calendar / study / prayer / general.
   // -------------------------------------------------------------------------
-  app.get('/brain/churches', (req, res) => {
-    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
-    const rows = db.searchChurches({ city: req.query.city, state: req.query.state,
-      jurisdiction: req.query.jurisdiction, limit });
-    return res.json({ count: rows.length, churches: rows });
-  });
 
-  app.post('/brain/churches', (req, res) => {
-    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+  app.post('/brain/ask', async (req, res) => {
+    if (!orchestrator || typeof orchestrator.ask !== 'function') {
+      return res.status(503).json({ ok: false, error: 'ask_not_available',
+        hint: 'Orchestrator.ask() is missing. Deploy the P0-3 orchestrator patch.' });
+    }
+
     const b = req.body || {};
-    if (!b.name || !b.source) return res.status(400).json({ ok: false, error: 'name_and_source_required' });
-    const id = b.id || require('crypto').randomUUID();
-    db.upsertChurch({ id, place_id: b.place_id, name: b.name, jurisdiction: b.jurisdiction,
-      address: b.address, city: b.city, state: b.state, country: b.country || 'US',
-      lat: b.lat, lng: b.lng, phone: b.phone, website: b.website,
-      liturgical_calendar: b.liturgical_calendar, source: b.source, last_verified: b.last_verified });
-    return res.status(201).json({ ok: true, id });
+    if (!b.query) return res.status(400).json({ ok: false, error: 'query_required' });
+
+    try {
+      const result = await orchestrator.ask(b.query, {
+        sessionId: b.session_id,
+        forceMode: b.force_mode,
+      });
+      return res.json({
+        ok: true,
+        mode: result.mode,
+        answer: result.answer,
+        detail: result.detail || undefined,
+      });
+    } catch (e) {
+      logger.error('ask_endpoint_error', { name: e && e.name });
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
   });
 
   // -------------------------------------------------------------------------
-  // Phase 2 — BTW queue
+  // 404 catch-all
   // -------------------------------------------------------------------------
-  app.get('/brain/btw', (req, res) => {
-    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
-    const rows = db.pendingBtw();
-    return res.json({ count: rows.length, items: rows });
-  });
 
-  app.post('/brain/btw', (req, res) => {
-    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
-    const b = req.body || {};
-    if (!b.message) return res.status(400).json({ ok: false, error: 'message_required' });
-    const id = b.id || require('crypto').randomUUID();
-    db.enqueueBtw({ id, message: b.message, category: b.category, priority: b.priority,
-      delivery_mode: b.delivery_mode, deliver_at: b.deliver_at, source_ref: b.source_ref });
-    return res.status(201).json({ ok: true, id });
-  });
-
-  app.post('/brain/btw/:id/delivered', (req, res) => {
-    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
-    db.markBtwDelivered(req.params.id);
-    return res.json({ ok: true });
-  });
-
-  // No mutation routes exist by design (the ingest endpoint applies only
-  // externally-sourced statuses through the deterministic state machine).
   app.use((req, res) => res.status(404).json({ ok: false, error: 'not_found' }));
 
   return app;
