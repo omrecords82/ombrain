@@ -204,134 +204,185 @@ END;
 -- -----------------------------------------------------------------------------
 -- vec0 virtual tables are created programmatically when the extension is present.
 
--- -----------------------------------------------------------------------------
--- Phase 2 memory layer tables (TODO-DELEGATE §1 — append only; not deployed yet)
--- -----------------------------------------------------------------------------
+-- =============================================================================
+-- PHASE 2 — Extended memory layers (Self-Learning, Theological, Calendar, etc.)
+-- =============================================================================
 
+-- -----------------------------------------------------------------------------
+-- 9. task_memory — active work items and obligations tracked by the Brain.
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS task_memory (
-  id          TEXT PRIMARY KEY,
-  ref_key     TEXT,
-  title       TEXT,
-  body        TEXT,
-  due_at      TEXT,
-  status      TEXT,
-  source      TEXT,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  id              TEXT PRIMARY KEY,           -- UUID
+  title           TEXT NOT NULL,
+  description     TEXT,
+  status          TEXT NOT NULL DEFAULT 'open', -- open | in_progress | blocked | done | cancelled
+  priority        TEXT NOT NULL DEFAULT 'normal', -- low | normal | high | critical
+  assigned_to     TEXT,                       -- operator or system identifier
+  due_at          TEXT,                       -- ISO-8601 datetime
+  tags_json       TEXT,                       -- JSON array of string tags
+  source          TEXT,                       -- how it was created: manual | ingest | brain
+  source_ref      TEXT,                       -- external reference (ticket id, session id, etc.)
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_task_status ON task_memory(status);
+CREATE INDEX IF NOT EXISTS idx_task_priority ON task_memory(priority);
 
+-- -----------------------------------------------------------------------------
+-- 10. knowledge_memory — durable facts, documentation, and operator-taught knowledge.
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS knowledge_memory (
-  id          TEXT PRIMARY KEY,
-  slug        TEXT UNIQUE,
-  title       TEXT,
-  body        TEXT,
-  tags        TEXT,
-  source      TEXT,
-  embedding   BLOB,
-  version     INTEGER,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  id              TEXT PRIMARY KEY,           -- UUID
+  slug            TEXT NOT NULL UNIQUE,       -- stable human-readable key
+  title           TEXT NOT NULL,
+  body            TEXT NOT NULL,              -- the knowledge content
+  category        TEXT NOT NULL,              -- platform | ops | theology | general
+  tags_json       TEXT,                       -- JSON array
+  source_ref      TEXT,                       -- file path, URL, or session id
+  confidence      REAL NOT NULL DEFAULT 1.0,  -- 0.0–1.0
+  embedding       BLOB,                       -- float32 vector (nullable)
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge_memory(category);
+CREATE INDEX IF NOT EXISTS idx_knowledge_slug ON knowledge_memory(slug);
 
+-- -----------------------------------------------------------------------------
+-- 11. procedure_memory — self-learned repeatable workflows (retrieval-first pipeline).
+--     Draft procedures require approval before they are used in production.
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS procedure_memory (
-  id                    TEXT PRIMARY KEY,
-  slug                  TEXT UNIQUE,
-  title                 TEXT,
-  intent_key            TEXT,
-  mode                  TEXT,
-  trigger_examples      TEXT,
-  procedure_body        TEXT,
-  commands_json         TEXT,
-  required_permissions  TEXT,
-  risk_level            TEXT,
-  validation_steps      TEXT,
-  source_decision_id    TEXT,
-  source_type           TEXT,
-  confidence            REAL,
-  approved              INTEGER,
-  approved_by           TEXT,
-  approved_at           TEXT,
-  usage_count           INTEGER DEFAULT 0,
-  last_used_at          TEXT,
-  created_at            TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS correction_memory (
-  id                  TEXT PRIMARY KEY,
-  source_decision_id  TEXT,
-  session_id          TEXT,
-  question_type       TEXT,
-  verdict             TEXT,
-  original_output     TEXT,
-  correction          TEXT,
-  correction_source   TEXT,
-  correction_version  INTEGER DEFAULT 1,
-  active              INTEGER DEFAULT 1,
+  id                  TEXT PRIMARY KEY,       -- UUID
+  slug                TEXT NOT NULL UNIQUE,   -- stable identifier e.g. "full-system-status-check"
+  title               TEXT NOT NULL,
+  intent_key          TEXT NOT NULL,          -- classifier intent that triggers this procedure
+  mode                TEXT NOT NULL,          -- knowledge | technical | ops
+  trigger_examples    TEXT,                   -- JSON array of example phrases
+  procedure_body      TEXT NOT NULL,          -- human-readable procedure description
+  commands_json       TEXT,                   -- JSON array of {cmd, description, expected_output}
+  required_permissions TEXT,                  -- JSON array of required permission strings
+  risk_level          TEXT NOT NULL DEFAULT 'low', -- low | medium | high | destructive
+  validation_steps    TEXT,                   -- JSON array of validation checks
+  source_decision_id  TEXT,                   -- FK -> decision_memory.id (origin)
+  source_type         TEXT,                   -- llm_extracted | operator_taught | imported
+  confidence          REAL NOT NULL DEFAULT 0.0, -- 0.0–1.0
+  approved            INTEGER NOT NULL DEFAULT 0, -- 0=draft, 1=approved
+  approved_by         TEXT,
+  approved_at         TEXT,
+  usage_count         INTEGER NOT NULL DEFAULT 0,
+  last_used_at        TEXT,
   created_at          TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_procedure_slug ON procedure_memory(slug);
+CREATE INDEX IF NOT EXISTS idx_procedure_intent ON procedure_memory(intent_key);
+CREATE INDEX IF NOT EXISTS idx_procedure_approved ON procedure_memory(approved);
+CREATE INDEX IF NOT EXISTS idx_procedure_risk ON procedure_memory(risk_level);
 
+-- -----------------------------------------------------------------------------
+-- 12. correction_memory — APPEND-ONLY ledger of known mistakes and operator overrides.
+--     Used in the retrieval-first pipeline to override conflicting knowledge.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS correction_memory (
+  id                  TEXT PRIMARY KEY,       -- UUID
+  decision_id         TEXT,                   -- FK -> decision_memory.id (what was wrong)
+  procedure_id        TEXT,                   -- FK -> procedure_memory.id (if procedure failed)
+  correction_type     TEXT NOT NULL,          -- operator_override | failed_reuse | factual_error | safety_violation
+  wrong_answer        TEXT NOT NULL,          -- what the Brain said / did
+  correct_answer      TEXT NOT NULL,          -- what the correct answer/action is
+  explanation         TEXT,                   -- why it was wrong
+  submitted_by        TEXT NOT NULL,          -- operator id or 'system'
+  tags_json           TEXT,                   -- JSON array for retrieval
+  embedding           BLOB,                   -- float32 vector for semantic search
+  created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_correction_type ON correction_memory(correction_type);
+CREATE INDEX IF NOT EXISTS idx_correction_decision ON correction_memory(decision_id);
+
+-- Append-only guard: corrections are never modified or deleted.
+CREATE TRIGGER IF NOT EXISTS correction_memory_no_update
+BEFORE UPDATE ON correction_memory
+BEGIN
+  SELECT RAISE(ABORT, 'correction_memory is append-only (OM-DOCTRINE-0001): UPDATE forbidden');
+END;
+
+CREATE TRIGGER IF NOT EXISTS correction_memory_no_delete
+BEFORE DELETE ON correction_memory
+BEGIN
+  SELECT RAISE(ABORT, 'correction_memory is append-only (OM-DOCTRINE-0001): DELETE forbidden');
+END;
+
+-- -----------------------------------------------------------------------------
+-- 13. theological_memory — Orthodox Christian knowledge (scripture, catechism, councils, etc.)
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS theological_memory (
-  id          TEXT PRIMARY KEY,
-  source      TEXT,
-  source_ref  TEXT,
-  book        TEXT,
-  chapter     INTEGER,
-  verse_start INTEGER,
-  verse_end   INTEGER,
-  topic_tags  TEXT,
-  body        TEXT,
-  language    TEXT,
-  embedding   BLOB,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  id              TEXT PRIMARY KEY,           -- UUID
+  category        TEXT NOT NULL,             -- scripture | catechism | council | patristic | liturgy | belief
+  subcategory     TEXT,                       -- e.g. "OT", "NT", "Nicaea I", "Chrysostom"
+  reference_key   TEXT NOT NULL,             -- e.g. "Gen.1.1", "Catechism.Q47", "Nicaea.Canon.1"
+  title           TEXT,
+  body            TEXT NOT NULL,             -- the text content
+  source          TEXT NOT NULL,             -- e.g. "Brenton LXX 1851", "St. Philaret's Catechism"
+  language        TEXT NOT NULL DEFAULT 'en',
+  embedding       BLOB,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_theological_source ON theological_memory(source);
-CREATE INDEX IF NOT EXISTS idx_theological_book_chapter ON theological_memory(book, chapter);
+CREATE INDEX IF NOT EXISTS idx_theo_category ON theological_memory(category);
+CREATE INDEX IF NOT EXISTS idx_theo_ref ON theological_memory(reference_key);
 
+-- Theological content is immutable once seeded.
+CREATE TRIGGER IF NOT EXISTS theological_memory_no_update
+BEFORE UPDATE ON theological_memory
+BEGIN
+  SELECT RAISE(ABORT, 'theological_memory is immutable after seeding: UPDATE forbidden');
+END;
+
+CREATE TRIGGER IF NOT EXISTS theological_memory_no_delete
+BEFORE DELETE ON theological_memory
+BEGIN
+  SELECT RAISE(ABORT, 'theological_memory is immutable after seeding: DELETE forbidden');
+END;
+
+-- -----------------------------------------------------------------------------
+-- 14. church_memory — Orthodox parish data (Google Places + AOB directory cache).
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS church_memory (
-  id                    TEXT PRIMARY KEY,
-  place_id              TEXT UNIQUE,
-  name                  TEXT,
-  address               TEXT,
-  city                  TEXT,
-  state                 TEXT,
-  zip                   TEXT,
-  country               TEXT,
-  lat                   REAL,
-  lng                   REAL,
-  phone                 TEXT,
-  website               TEXT,
-  google_maps_url       TEXT,
-  rating                REAL,
-  rating_count          INTEGER,
-  jurisdiction          TEXT,
-  calendar_type         TEXT,
-  canonical             INTEGER,
-  service_schedule_json TEXT,
-  opening_hours_json    TEXT,
-  hours_source          TEXT,
-  last_fetched_at       TEXT,
-  created_at            TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+  id              TEXT PRIMARY KEY,           -- UUID
+  place_id        TEXT,                       -- Google Places place_id (nullable for AOB-only)
+  name            TEXT NOT NULL,
+  jurisdiction    TEXT,                       -- e.g. "OCA", "GOARCH", "ROCOR", "Antiochian"
+  address         TEXT,
+  city            TEXT,
+  state           TEXT,
+  country         TEXT NOT NULL DEFAULT 'US',
+  lat             REAL,
+  lng             REAL,
+  phone           TEXT,
+  website         TEXT,
+  liturgical_calendar TEXT,                   -- Julian | Revised Julian | Gregorian
+  source          TEXT NOT NULL,              -- google_places | aob_directory | manual
+  last_verified   TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_church_lat_lng ON church_memory(lat, lng);
-CREATE INDEX IF NOT EXISTS idx_church_zip ON church_memory(zip);
-CREATE INDEX IF NOT EXISTS idx_church_place_id ON church_memory(place_id);
 CREATE INDEX IF NOT EXISTS idx_church_jurisdiction ON church_memory(jurisdiction);
-CREATE INDEX IF NOT EXISTS idx_church_calendar_type ON church_memory(calendar_type);
+CREATE INDEX IF NOT EXISTS idx_church_location ON church_memory(state, city);
+CREATE INDEX IF NOT EXISTS idx_church_place_id ON church_memory(place_id);
 
+-- -----------------------------------------------------------------------------
+-- 15. btw_queue — "By The Way" interrupt queue for non-urgent Brain notifications.
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS btw_queue (
-  id          TEXT PRIMARY KEY,
-  session_id  TEXT,
-  btw_id      TEXT,
-  question    TEXT,
-  mode        TEXT,
-  answer      TEXT,
-  answered    INTEGER DEFAULT 0,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  answered_at TEXT
+  id              TEXT PRIMARY KEY,           -- UUID
+  message         TEXT NOT NULL,             -- the notification text
+  category        TEXT NOT NULL,             -- ops | theology | calendar | system | general
+  priority        TEXT NOT NULL DEFAULT 'low', -- low | normal
+  delivered       INTEGER NOT NULL DEFAULT 0, -- 0=pending, 1=delivered
+  delivery_mode   TEXT NOT NULL DEFAULT 'next_interaction', -- next_interaction | scheduled
+  deliver_at      TEXT,                       -- ISO-8601 if scheduled
+  source_ref      TEXT,                       -- what triggered this BTW
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  delivered_at    TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_btw_session ON btw_queue(session_id);
-CREATE INDEX IF NOT EXISTS idx_btw_answered ON btw_queue(answered);
+CREATE INDEX IF NOT EXISTS idx_btw_delivered ON btw_queue(delivered);
+CREATE INDEX IF NOT EXISTS idx_btw_deliver_at ON btw_queue(deliver_at);
