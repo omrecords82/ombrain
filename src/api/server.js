@@ -190,6 +190,16 @@ function createServer(deps = {}) {
     return res.json({ knowledge: row });
   });
 
+  // POST /brain/knowledge/search — dedicated semantic / full-text search endpoint
+  app.post('/brain/knowledge/search', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const b = req.body || {};
+    if (!b.q) return res.status(400).json({ ok: false, error: 'q_required' });
+    const limit = Math.min(Number(b.limit) || 20, 200);
+    const rows = db.searchKnowledge(b.q, { category: b.category, limit });
+    return res.json({ count: rows.length, results: rows });
+  });
+
   // -------------------------------------------------------------------------
   // Phase 2 — Procedure memory (self-learning)
   // -------------------------------------------------------------------------
