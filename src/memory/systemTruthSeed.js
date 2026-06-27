@@ -19,8 +19,10 @@ module.exports = [
     body: 'om-db 192.168.1.241: dedicated MariaDB (orthodoxmetrics_db, omai_db, om_logging_db, om_church_* tenant DBs). Memory/IO sacred — exclude from inference.' },
   { domain: 'architecture', fact_key: 'host.omstudio', source_ref: '02-brain-architecture-server-map.md',
     body: 'omstudio-primary 192.168.1.242: OMStudio V2 planning/governance + local MariaDB omstudio_db. Brain memory/governance transplant target (Phase 2).' },
-  { domain: 'architecture', fact_key: 'host.auth01', source_ref: '92-brain-hardware-confirmation-phase1.md',
-    body: 'auth01 192.168.1.254: Keycloak SSO :8080 + PostgreSQL. 30 vCPU / 53 GB RAM. CONFIRMED Phase 1 PRIMARY inference host; inference MUST be isolated via systemd slice/cgroup with hard MemoryMax so LLM spikes never starve Keycloak/PostgreSQL.' },
+  { domain: 'architecture', fact_key: 'host.om-dev', source_ref: '02-brain-architecture-server-map.md',
+    body: 'om-dev 192.168.1.254: OM Brain (:8390/:8391), Ollama inference, om-brain SQLite. Phase 1 PRIMARY inference host (30 vCPU / 53 GB RAM); inference MUST be isolated via systemd slice/cgroup with hard MemoryMax. NOT Keycloak — SSO is auth0 .253.' },
+  { domain: 'architecture', fact_key: 'host.auth0', source_ref: '02-brain-architecture-server-map.md',
+    body: 'auth0 192.168.1.253: Keycloak SSO :8080 + PostgreSQL for OIDC realms orthodoxmetrics, omai, omstudio, workshop.' },
   { domain: 'architecture', fact_key: 'host.workshop', source_ref: '92-brain-hardware-confirmation-phase1.md',
     body: 'om-workshop 192.168.1.251: Workshop app, low coupling. Secondary/pilot inference host for 3B-4B models.' },
 

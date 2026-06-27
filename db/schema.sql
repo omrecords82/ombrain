@@ -203,3 +203,135 @@ END;
 -- above remain the portable fallback.
 -- -----------------------------------------------------------------------------
 -- vec0 virtual tables are created programmatically when the extension is present.
+
+-- -----------------------------------------------------------------------------
+-- Phase 2 memory layer tables (TODO-DELEGATE §1 — append only; not deployed yet)
+-- -----------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS task_memory (
+  id          TEXT PRIMARY KEY,
+  ref_key     TEXT,
+  title       TEXT,
+  body        TEXT,
+  due_at      TEXT,
+  status      TEXT,
+  source      TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_memory (
+  id          TEXT PRIMARY KEY,
+  slug        TEXT UNIQUE,
+  title       TEXT,
+  body        TEXT,
+  tags        TEXT,
+  source      TEXT,
+  embedding   BLOB,
+  version     INTEGER,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS procedure_memory (
+  id                    TEXT PRIMARY KEY,
+  slug                  TEXT UNIQUE,
+  title                 TEXT,
+  intent_key            TEXT,
+  mode                  TEXT,
+  trigger_examples      TEXT,
+  procedure_body        TEXT,
+  commands_json         TEXT,
+  required_permissions  TEXT,
+  risk_level            TEXT,
+  validation_steps      TEXT,
+  source_decision_id    TEXT,
+  source_type           TEXT,
+  confidence            REAL,
+  approved              INTEGER,
+  approved_by           TEXT,
+  approved_at           TEXT,
+  usage_count           INTEGER DEFAULT 0,
+  last_used_at          TEXT,
+  created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS correction_memory (
+  id                  TEXT PRIMARY KEY,
+  source_decision_id  TEXT,
+  session_id          TEXT,
+  question_type       TEXT,
+  verdict             TEXT,
+  original_output     TEXT,
+  correction          TEXT,
+  correction_source   TEXT,
+  correction_version  INTEGER DEFAULT 1,
+  active              INTEGER DEFAULT 1,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS theological_memory (
+  id          TEXT PRIMARY KEY,
+  source      TEXT,
+  source_ref  TEXT,
+  book        TEXT,
+  chapter     INTEGER,
+  verse_start INTEGER,
+  verse_end   INTEGER,
+  topic_tags  TEXT,
+  body        TEXT,
+  language    TEXT,
+  embedding   BLOB,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_theological_source ON theological_memory(source);
+CREATE INDEX IF NOT EXISTS idx_theological_book_chapter ON theological_memory(book, chapter);
+
+CREATE TABLE IF NOT EXISTS church_memory (
+  id                    TEXT PRIMARY KEY,
+  place_id              TEXT UNIQUE,
+  name                  TEXT,
+  address               TEXT,
+  city                  TEXT,
+  state                 TEXT,
+  zip                   TEXT,
+  country               TEXT,
+  lat                   REAL,
+  lng                   REAL,
+  phone                 TEXT,
+  website               TEXT,
+  google_maps_url       TEXT,
+  rating                REAL,
+  rating_count          INTEGER,
+  jurisdiction          TEXT,
+  calendar_type         TEXT,
+  canonical             INTEGER,
+  service_schedule_json TEXT,
+  opening_hours_json    TEXT,
+  hours_source          TEXT,
+  last_fetched_at       TEXT,
+  created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_church_lat_lng ON church_memory(lat, lng);
+CREATE INDEX IF NOT EXISTS idx_church_zip ON church_memory(zip);
+CREATE INDEX IF NOT EXISTS idx_church_place_id ON church_memory(place_id);
+CREATE INDEX IF NOT EXISTS idx_church_jurisdiction ON church_memory(jurisdiction);
+CREATE INDEX IF NOT EXISTS idx_church_calendar_type ON church_memory(calendar_type);
+
+CREATE TABLE IF NOT EXISTS btw_queue (
+  id          TEXT PRIMARY KEY,
+  session_id  TEXT,
+  btw_id      TEXT,
+  question    TEXT,
+  mode        TEXT,
+  answer      TEXT,
+  answered    INTEGER DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  answered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_btw_session ON btw_queue(session_id);
+CREATE INDEX IF NOT EXISTS idx_btw_answered ON btw_queue(answered);
