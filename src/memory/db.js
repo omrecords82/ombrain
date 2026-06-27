@@ -1036,34 +1036,74 @@ class MemoryDB {
   // -------------------------------------------------------------------------
   // Church memory — Orthodox parish data
   // -------------------------------------------------------------------------
-  upsertChurch({ id, place_id, name, jurisdiction, address, city, state, country, lat, lng, phone, website, liturgical_calendar, source, last_verified }) {
+  upsertChurch({
+    id, place_id, name, jurisdiction, address, city, state, country,
+    lat, lng, phone, website, liturgical_calendar, source, last_verified,
+    google_maps_url, rating, rating_count, canonical,
+    service_schedule_json, opening_hours_json, hours_source, last_fetched_at, zip,
+  }) {
     const now = new Date().toISOString();
     if (this.backend === 'sqlite') {
       this.sqlite
         .prepare(
-          `INSERT INTO church_memory (id, place_id, name, jurisdiction, address, city, state, country, lat, lng, phone, website, liturgical_calendar, source, last_verified, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))
+          `INSERT INTO church_memory (
+             id, place_id, name, jurisdiction, address, city, state, country,
+             lat, lng, phone, website, liturgical_calendar, source, last_verified,
+             google_maps_url, rating, rating_count, canonical,
+             service_schedule_json, opening_hours_json, hours_source, last_fetched_at, zip,
+             created_at, updated_at
+           )
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))
            ON CONFLICT(id) DO UPDATE SET
              place_id=excluded.place_id, name=excluded.name, jurisdiction=excluded.jurisdiction,
              address=excluded.address, city=excluded.city, state=excluded.state, country=excluded.country,
              lat=excluded.lat, lng=excluded.lng, phone=excluded.phone, website=excluded.website,
              liturgical_calendar=excluded.liturgical_calendar, source=excluded.source,
-             last_verified=excluded.last_verified, updated_at=datetime('now')`,
+             last_verified=excluded.last_verified,
+             google_maps_url=COALESCE(excluded.google_maps_url, google_maps_url),
+             rating=COALESCE(excluded.rating, rating),
+             rating_count=COALESCE(excluded.rating_count, rating_count),
+             canonical=COALESCE(excluded.canonical, canonical),
+             service_schedule_json=COALESCE(excluded.service_schedule_json, service_schedule_json),
+             opening_hours_json=COALESCE(excluded.opening_hours_json, opening_hours_json),
+             hours_source=COALESCE(excluded.hours_source, hours_source),
+             last_fetched_at=COALESCE(excluded.last_fetched_at, last_fetched_at),
+             zip=COALESCE(excluded.zip, zip),
+             updated_at=datetime('now')`,
         )
-        .run(id, place_id || null, name, jurisdiction || null, address || null, city || null,
-          state || null, country || 'US', lat || null, lng || null, phone || null,
-          website || null, liturgical_calendar || null, source, last_verified || null);
+        .run(
+          id, place_id || null, name, jurisdiction || null, address || null,
+          city || null, state || null, country || 'US', lat || null, lng || null,
+          phone || null, website || null, liturgical_calendar || null, source, last_verified || null,
+          google_maps_url || null, rating || null, rating_count || null,
+          canonical != null ? canonical : null,
+          service_schedule_json || null, opening_hours_json || null,
+          hours_source || 'google_places', last_fetched_at || now, zip || null,
+        );
       return id;
     }
     const existing = this.json.church_memory.find((r) => r.id === id);
+    const merged = {
+      id, place_id: place_id || null, name, jurisdiction: jurisdiction || null,
+      address: address || null, city: city || null, state: state || null, country: country || 'US',
+      lat: lat || null, lng: lng || null, phone: phone || null, website: website || null,
+      liturgical_calendar: liturgical_calendar || null, source, last_verified: last_verified || null,
+      google_maps_url: google_maps_url || (existing && existing.google_maps_url) || null,
+      rating: rating || (existing && existing.rating) || null,
+      rating_count: rating_count || (existing && existing.rating_count) || null,
+      canonical: canonical != null ? canonical : (existing && existing.canonical != null ? existing.canonical : null),
+      service_schedule_json: service_schedule_json || (existing && existing.service_schedule_json) || null,
+      opening_hours_json: opening_hours_json || (existing && existing.opening_hours_json) || null,
+      hours_source: hours_source || (existing && existing.hours_source) || 'google_places',
+      last_fetched_at: last_fetched_at || now,
+      zip: zip || (existing && existing.zip) || null,
+      created_at: existing ? existing.created_at : now,
+      updated_at: now,
+    };
     if (existing) {
-      Object.assign(existing, { place_id, name, jurisdiction, address, city, state, country, lat, lng, phone, website, liturgical_calendar, source, last_verified, updated_at: now });
+      Object.assign(existing, merged);
     } else {
-      this.json.church_memory.push({ id, place_id: place_id || null, name, jurisdiction: jurisdiction || null,
-        address: address || null, city: city || null, state: state || null, country: country || 'US',
-        lat: lat || null, lng: lng || null, phone: phone || null, website: website || null,
-        liturgical_calendar: liturgical_calendar || null, source, last_verified: last_verified || null,
-        created_at: now, updated_at: now });
+      this.json.church_memory.push(merged);
     }
     this._persistJson();
     return id;
@@ -1087,6 +1127,83 @@ class MemoryDB {
     if (state) rows = rows.filter((r) => r.state === state);
     if (jurisdiction) rows = rows.filter((r) => r.jurisdiction === jurisdiction);
     return rows.slice(0, limit);
+  }
+
+  churchByPlaceId(placeId) {
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare('SELECT * FROM church_memory WHERE place_id = ?').get(placeId) || null;
+    }
+    return this.json.church_memory.find((r) => r.place_id === placeId) || null;
+  }
+
+  churchesByLatLng(lat, lng, radiusMiles = 25) {
+    const ttlHours = Number(process.env.BRAIN_CHURCH_CACHE_TTL_HOURS || 168);
+    const degreesLat = radiusMiles / 69.0;
+    const degreesLng = radiusMiles / (69.0 * Math.cos((lat * Math.PI) / 180));
+    const minLat = lat - degreesLat;
+    const maxLat = lat + degreesLat;
+    const minLng = lng - degreesLng;
+    const maxLng = lng + degreesLng;
+    const cutoff = new Date(Date.now() - ttlHours * 3600 * 1000).toISOString();
+
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare(
+        `SELECT * FROM church_memory
+         WHERE lat BETWEEN ? AND ?
+           AND lng BETWEEN ? AND ?
+           AND (last_fetched_at IS NULL OR last_fetched_at >= ?)
+         ORDER BY name`,
+      ).all(minLat, maxLat, minLng, maxLng, cutoff);
+    }
+    return this.json.church_memory.filter((r) =>
+      r.lat >= minLat && r.lat <= maxLat &&
+      r.lng >= minLng && r.lng <= maxLng &&
+      (!r.last_fetched_at || r.last_fetched_at >= cutoff),
+    );
+  }
+
+  enrichChurch(placeId, { jurisdiction, liturgical_calendar, canonical, service_schedule_json }) {
+    if (this.backend === 'sqlite') {
+      this.sqlite.prepare(
+        `UPDATE church_memory SET
+           jurisdiction = COALESCE(?, jurisdiction),
+           liturgical_calendar = COALESCE(?, liturgical_calendar),
+           canonical = COALESCE(?, canonical),
+           service_schedule_json = COALESCE(?, service_schedule_json),
+           hours_source = CASE WHEN ? IS NOT NULL THEN 'church_memory' ELSE hours_source END,
+           updated_at = datetime('now')
+         WHERE place_id = ?`,
+      ).run(
+        jurisdiction || null,
+        liturgical_calendar || null,
+        canonical != null ? canonical : null,
+        service_schedule_json || null,
+        service_schedule_json || null,
+        placeId,
+      );
+      return;
+    }
+    const row = this.json.church_memory.find((r) => r.place_id === placeId);
+    if (row) {
+      if (jurisdiction) row.jurisdiction = jurisdiction;
+      if (liturgical_calendar) row.liturgical_calendar = liturgical_calendar;
+      if (canonical != null) row.canonical = canonical;
+      if (service_schedule_json) {
+        row.service_schedule_json = service_schedule_json;
+        row.hours_source = 'church_memory';
+      }
+      row.updated_at = new Date().toISOString();
+      this._persistJson();
+    }
+  }
+
+  listChurchJurisdictions() {
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare(
+        'SELECT DISTINCT jurisdiction FROM church_memory WHERE jurisdiction IS NOT NULL ORDER BY jurisdiction',
+      ).all().map((r) => r.jurisdiction);
+    }
+    return [...new Set(this.json.church_memory.map((r) => r.jurisdiction).filter(Boolean))].sort();
   }
 
   // -------------------------------------------------------------------------
@@ -1130,6 +1247,63 @@ class MemoryDB {
     const row = this.json.btw_queue.find((r) => r.id === id);
     if (row) Object.assign(row, { delivered: 1, delivered_at: now });
     this._persistJson();
+  }
+
+  enqueueBtwQuestion({ session_id, btw_id, question, mode }) {
+    const id = btw_id || require('crypto').randomUUID();
+    if (this.backend === 'sqlite') {
+      this.sqlite.prepare(
+        `INSERT INTO btw_queue
+           (id, session_id, btw_id, question, mode, message, category, priority, answered, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'ops', 'normal', 0, datetime('now'))`,
+      ).run(id, session_id, id, question, mode || 'auto', question);
+      return id;
+    }
+    this.json.btw_queue.push({
+      id, session_id, btw_id: id, question, mode: mode || 'auto',
+      message: question, category: 'ops', priority: 'normal',
+      answered: 0, delivered: 0, delivery_mode: 'next_interaction',
+      created_at: new Date().toISOString(), answered_at: null, delivered_at: null,
+    });
+    this._persistJson();
+    return id;
+  }
+
+  pendingBtwQuestions(session_id) {
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare(
+        'SELECT * FROM btw_queue WHERE session_id = ? AND answered = 0 ORDER BY created_at ASC',
+      ).all(session_id);
+    }
+    return this.json.btw_queue.filter((r) => r.session_id === session_id && !r.answered);
+  }
+
+  answerBtw(btw_id, answer) {
+    if (this.backend === 'sqlite') {
+      this.sqlite.prepare(
+        `UPDATE btw_queue SET answered = 1, answer = ?, answered_at = datetime('now'), delivered = 1, delivered_at = datetime('now')
+         WHERE btw_id = ? OR id = ?`,
+      ).run(answer, btw_id, btw_id);
+      return;
+    }
+    const row = this.json.btw_queue.find((r) => r.btw_id === btw_id || r.id === btw_id);
+    if (row) {
+      row.answered = 1;
+      row.answer = answer;
+      row.answered_at = new Date().toISOString();
+      row.delivered = 1;
+      row.delivered_at = row.answered_at;
+      this._persistJson();
+    }
+  }
+
+  btwHistory(session_id) {
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare(
+        'SELECT * FROM btw_queue WHERE session_id = ? ORDER BY created_at ASC',
+      ).all(session_id);
+    }
+    return this.json.btw_queue.filter((r) => r.session_id === session_id);
   }
 
   close() {

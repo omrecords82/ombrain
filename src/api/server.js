@@ -71,7 +71,7 @@ function getLiturgicalSeason(date, cal) {
 // ---------------------------------------------------------------------------
 
 function createServer(deps = {}) {
-  const { db, orchestrator, governance } = deps;
+  const { db, orchestrator, governance, churchFinder } = deps;
   const app = express();
   app.use(express.json({ limit: '1mb' }));
 
@@ -373,8 +373,81 @@ function createServer(deps = {}) {
     db.upsertChurch({ id, place_id: b.place_id, name: b.name, jurisdiction: b.jurisdiction,
       address: b.address, city: b.city, state: b.state, country: b.country || 'US',
       lat: b.lat, lng: b.lng, phone: b.phone, website: b.website,
-      liturgical_calendar: b.liturgical_calendar, source: b.source, last_verified: b.last_verified });
+      liturgical_calendar: b.liturgical_calendar, source: b.source, last_verified: b.last_verified,
+      google_maps_url: b.google_maps_url, rating: b.rating, rating_count: b.rating_count,
+      canonical: b.canonical, service_schedule_json: b.service_schedule_json,
+      opening_hours_json: b.opening_hours_json, hours_source: b.hours_source,
+      last_fetched_at: b.last_fetched_at, zip: b.zip });
     return res.status(201).json({ ok: true, id });
+  });
+
+  app.get('/brain/churches/jurisdictions', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const jurisdictions = typeof db.listChurchJurisdictions === 'function'
+      ? db.listChurchJurisdictions()
+      : [];
+    return res.json({ count: jurisdictions.length, jurisdictions });
+  });
+
+  app.post('/brain/churches/find', async (req, res) => {
+    if (!churchFinder) {
+      return res.status(503).json({ ok: false, error: 'church_finder_not_configured' });
+    }
+    const b = req.body || {};
+    try {
+      let result;
+      if (b.lat != null && b.lng != null) {
+        result = await churchFinder.searchNearby({
+          lat: Number(b.lat),
+          lng: Number(b.lng),
+          radiusMiles: Number(b.radius_miles) || 25,
+          limit: Math.min(Number(b.limit) || 10, 50),
+        });
+      } else if (b.zip || b.query) {
+        result = await churchFinder.findChurches({
+          input: b.zip || b.query,
+          radiusMiles: Number(b.radius_miles) || 25,
+        });
+      } else {
+        return res.status(400).json({ ok: false, error: 'lat_lng_or_zip_or_query_required' });
+      }
+      return res.json({ ok: true, ...result });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: 'church_finder_error', detail: err && err.message });
+    }
+  });
+
+  app.get('/brain/churches/:id', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    if (req.params.id === 'jurisdictions') {
+      return res.redirect(307, '/brain/churches/jurisdictions');
+    }
+    let row = typeof db.churchByPlaceId === 'function'
+      ? db.churchByPlaceId(req.params.id)
+      : null;
+    if (!row) {
+      const all = db.searchChurches({ limit: 5000 });
+      row = all.find((r) => r.id === req.params.id) || null;
+    }
+    if (!row) return res.status(404).json({ ok: false, error: 'church_not_found' });
+    return res.json({ church: row });
+  });
+
+  app.post('/brain/churches/:id/enrich', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    if (typeof db.enrichChurch !== 'function') {
+      return res.status(503).json({ ok: false, error: 'enrichChurch_not_available' });
+    }
+    const b = req.body || {};
+    db.enrichChurch(req.params.id, {
+      jurisdiction: b.jurisdiction,
+      liturgical_calendar: b.liturgical_calendar,
+      canonical: b.canonical,
+      service_schedule_json: b.service_schedule_json
+        ? (typeof b.service_schedule_json === 'string' ? b.service_schedule_json : JSON.stringify(b.service_schedule_json))
+        : null,
+    });
+    return res.json({ ok: true, place_id: req.params.id });
   });
 
   // -------------------------------------------------------------------------
@@ -401,6 +474,30 @@ function createServer(deps = {}) {
     if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
     db.markBtwDelivered(req.params.id);
     return res.json({ ok: true });
+  });
+
+  app.post('/brain/btw/session', (req, res) => {
+    if (!orchestrator || !orchestrator.btwQueue) {
+      return res.status(503).json({ ok: false, error: 'btw_queue_not_configured' });
+    }
+    const b = req.body || {};
+    if (!b.session_id || !b.question) {
+      return res.status(400).json({ ok: false, error: 'session_id_and_question_required' });
+    }
+    const result = orchestrator.btwQueue.enqueue({
+      session_id: b.session_id,
+      question: b.question,
+      mode: b.mode,
+    });
+    return res.status(result.ok ? 201 : 400).json(result);
+  });
+
+  app.get('/brain/btw/session/:session_id', (req, res) => {
+    if (!orchestrator || !orchestrator.btwQueue) {
+      return res.status(503).json({ ok: false, error: 'btw_queue_not_configured' });
+    }
+    const history = orchestrator.btwQueue.history(req.params.session_id);
+    return res.json({ count: history.length, items: history });
   });
 
   // -------------------------------------------------------------------------
@@ -661,13 +758,17 @@ function createServer(deps = {}) {
     try {
       const result = await orchestrator.ask(b.query, {
         sessionId: b.session_id,
-        forceMode: b.force_mode,
+        forceMode: b.force_mode || b.mode,
+        btw: b.btw || false,
+        useModel: b.use_model || false,
       });
       return res.json({
         ok: true,
         mode: result.mode,
         answer: result.answer,
+        recommendation: result.recommendation,
         detail: result.detail || undefined,
+        btw_queue: result.btw_queue,
       });
     } catch (e) {
       logger.error('ask_endpoint_error', { name: e && e.name });

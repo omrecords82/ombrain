@@ -201,8 +201,8 @@ async function cmdScripture(args) {
 async function cmdChurch(args) {
   const { ChurchFinder } = loadChurchFinder();
   const cf = new ChurchFinder({
-    proxyBaseUrl: process.env.OMAI_PROXY_URL || 'http://192.168.1.242:3001',
-    googleApiKey: process.env.GOOGLE_PLACES_API_KEY || '',
+    proxyBaseUrl: process.env.OMAI_PROXY_URL || 'http://192.168.1.239:7060',
+    serviceToken: process.env.OMSTUDIO_SERVICE_TOKEN || '',
     timeoutMs:    8000,
     logger:       { info: () => {}, error: (e) => console.error(e) },
   });

@@ -82,12 +82,14 @@ function shouldAutoPromote(riskLevel) {
 
 class Orchestrator {
   /**
-   * @param {object} deps { db, aiClient, governance }
+   * @param {object} deps { db, aiClient, governance, modeRouter, btwQueue }
    */
   constructor(deps = {}) {
     this.db = deps.db;
     this.ai = deps.aiClient || null;
     this.governance = deps.governance || null;
+    this.modeRouter = deps.modeRouter || null;
+    this.btwQueue = deps.btwQueue || null;
     this.doctrineText = this._loadDoctrine();
   }
 
@@ -133,19 +135,44 @@ class Orchestrator {
   }
 
   _recallSystemTruth(owningSystem) {
-    if (!this.db) return [];
-    try {
-      const all = this.db.allSystemTruth();
-      const sys = String(owningSystem || '').toLowerCase();
-      const ranked = all
-        .map((f) => ({ f, hit: f.body.toLowerCase().includes(sys) ? 1 : 0 }))
-        .sort((a, b) => b.hit - a.hit)
-        .slice(0, 8)
-        .map((x) => ({ domain: x.f.domain, fact_key: x.f.fact_key, body: x.f.body, source_ref: x.f.source_ref }));
-      return ranked;
-    } catch (_) {
-      return [];
+    const results = [];
+
+    if (this.db) {
+      try {
+        const all = this.db.allSystemTruth();
+        const sys = String(owningSystem || '').toLowerCase();
+        const ranked = all
+          .map((f) => ({ f, hit: f.body.toLowerCase().includes(sys) ? 1 : 0 }))
+          .sort((a, b) => b.hit - a.hit)
+          .slice(0, 8)
+          .map((x) => ({
+            recall_source: 'system_truth_memory',
+            domain: x.f.domain,
+            fact_key: x.f.fact_key,
+            body: x.f.body,
+            source_ref: x.f.source_ref,
+          }));
+        results.push(...ranked);
+      } catch (_) {}
     }
+
+    if (this.db && typeof this.db.searchKnowledge === 'function') {
+      try {
+        const knowledgeHits = this.db.searchKnowledge(owningSystem || '', { limit: 4 });
+        for (const doc of knowledgeHits) {
+          results.push({
+            recall_source: 'knowledge_memory',
+            domain: doc.category || 'knowledge',
+            fact_key: doc.slug,
+            body: doc.body ? doc.body.slice(0, 600) : '',
+            source_ref: doc.source_ref || doc.slug,
+            confidence: doc.confidence,
+          });
+        }
+      } catch (_) {}
+    }
+
+    return results;
   }
 
   _retrieveFromMemory(queryText, owningSystem) {
@@ -287,6 +314,66 @@ class Orchestrator {
       return { mode: 'general', answer: 'Please provide a question.', detail: {} };
     }
 
+    if (opts.btw && this.btwQueue) {
+      const mode = opts.mode || (this.modeRouter && typeof this.modeRouter.classifyIntent === 'function'
+        ? this.modeRouter.classifyIntent(q)
+        : 'auto');
+      const result = this.btwQueue.enqueue({ session_id: sessionId, question: q, mode });
+      return { ...result, session_id: sessionId, mode };
+    }
+
+    if (this.modeRouter && typeof this.modeRouter.routeQuery === 'function') {
+      let mode = opts.mode || opts.forceMode;
+      if (!mode && typeof this.modeRouter.classifyIntent === 'function') {
+        mode = this.modeRouter.classifyIntent(q);
+      }
+      if (!mode) mode = 'ops';
+
+      if (mode === 'knowledge' || mode === 'technical' || mode === 'ops') {
+        logger.info('ask_routing', { session_id: sessionId, mode, query: q.slice(0, 80) });
+        let primaryResult;
+        try {
+          if ((mode === 'knowledge' || mode === 'technical')) {
+            primaryResult = await this.modeRouter.routeQuery(q, {
+              db: this.db,
+              ai: this.ai,
+              sessionId,
+              useModel: opts.useModel,
+            });
+            primaryResult = { mode, session_id: sessionId, ...primaryResult };
+          } else {
+            const result = await this.diagnose({
+              sessionId,
+              incident: q,
+              proposal: q,
+              useModel: opts.useModel,
+            });
+            primaryResult = { mode: 'ops', ...result };
+          }
+        } catch (err) {
+          primaryResult = {
+            mode,
+            session_id: sessionId,
+            ok: false,
+            error: 'ask_route_error',
+            detail: err && err.message,
+          };
+        }
+
+        let btwAnswered = [];
+        if (this.btwQueue && typeof this.btwQueue.process === 'function') {
+          try {
+            btwAnswered = await this.btwQueue.process(sessionId, { db: this.db, ai: this.ai });
+          } catch (_) {}
+        }
+
+        return {
+          ...primaryResult,
+          btw_queue: btwAnswered.length > 0 ? btwAnswered : undefined,
+        };
+      }
+    }
+
     // Lazy-load the modes engine and pipeline handlers to avoid circular deps
     // at module load time.  These modules are already on disk in src/.
     let classifyIntent, handleCalendar, handleStudy, handlePrayer;
@@ -352,19 +439,26 @@ class Orchestrator {
         return { mode, answer: detail.answer, detail };
       }
 
-      // church mode: requires OMAI Places proxy — not yet available.
-      // Return a graceful message rather than a hard error.
       if (mode === 'church') {
-        return {
-          mode: 'church',
-          answer: 'Church finder requires the OMAI Places proxy (POST /api/brain/places/*), which is not yet deployed. Please check back after P1-2 is complete.',
-          detail: { type: 'church.proxy_unavailable' },
-        };
+        const { handleChurch } = require('../queryPipeline/pipeline');
+        const detail = await handleChurch(q, {
+          omaiProxyUrl: process.env.OMAI_PROXY_URL || 'http://192.168.1.239:7060',
+        });
+        return { mode, answer: detail.answer, detail };
       }
 
       // general / fallback: route to diagnose()
       const result = await this.diagnose({ sessionId, incident: q, proposal: q, useModel: !!(this.ai) });
-      return { mode: 'general', answer: result.recommendation || 'No answer available.', detail: result };
+      const response = { mode: 'general', answer: result.recommendation || 'No answer available.', detail: result };
+
+      if (this.btwQueue && typeof this.btwQueue.process === 'function') {
+        try {
+          const btwAnswered = await this.btwQueue.process(sessionId, { db: this.db, ai: this.ai });
+          if (btwAnswered.length > 0) response.btw_queue = btwAnswered;
+        } catch (_) {}
+      }
+
+      return response;
 
     } catch (err) {
       logger.warn('ask_handler_error', { mode, name: err && err.name });

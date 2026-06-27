@@ -20,6 +20,8 @@ const { LogAdapter } = require('./adapters/logAdapter');
 const { AuditorLoop } = require('./auditor/auditorLoop');
 const { CronManager } = require('./cron/cronManager');
 const { QueryPipeline } = require('./queryPipeline/pipeline');
+const { ChurchFinder } = require('./churchFinder');
+const { BtwQueue } = require('./session/btwQueue');
 const { createServer } = require('./api/server');
 const logger = require('./util/logger');
 
@@ -46,6 +48,15 @@ function main() {
 
   const orchestrator = new Orchestrator({ db, aiClient, governance });
 
+  const btwQueue = new BtwQueue({ db });
+  orchestrator.btwQueue = btwQueue;
+
+  const churchFinder = new ChurchFinder({
+    db,
+    proxyBaseUrl: process.env.OMAI_PROXY_URL || 'http://192.168.1.239:7060',
+    serviceToken: config.omstudio.serviceToken,
+  });
+
   const eventAdapter = new EventAdapter({ db });
   const inventoryAdapter = new InventoryAdapter({ db, governance });
   const logAdapter = new LogAdapter({ db });
@@ -64,7 +75,7 @@ function main() {
   const cron = new CronManager({ pipeline });
   cron.start();
 
-  const app = createServer({ db, orchestrator, governance });
+  const app = createServer({ db, orchestrator, governance, churchFinder });
   const server = app.listen(config.http.port, config.http.host, () => {
     logger.info('http_listening', { host: config.http.host, port: config.http.port });
   });
