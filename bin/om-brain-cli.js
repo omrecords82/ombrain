@@ -99,6 +99,12 @@ function printHelp() {
   mode classify <query...>            Classify query into a mode
   mode list                           List all modes
 
+\x1b[33mAsk (unified query):\x1b[0m
+  ask <query...>                      Classify + route a query through the pipeline
+  ask --mode <mode> <query...>        Force a specific mode (calendar|study|prayer|church|pastoral|ops|general)
+  pastoral <query...>                 Pastoral / spiritual-counsel guidance (informational)
+  ops <query...>                      Operational / fleet-health query (read-only)
+
 \x1b[33mProcedure Memory:\x1b[0m
   procedures list [--approved] [--draft]   List procedures (default: all)
   procedures search <query...>             Full-text search procedures
@@ -246,6 +252,54 @@ async function cmdMode(args) {
   } else {
     printError(`Unknown mode subcommand: ${sub}. Use: classify, list`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Ask / pastoral / ops commands (unified query routing)
+// ---------------------------------------------------------------------------
+
+function loadPipeline() { return require(path.join(root, 'src/queryPipeline/pipeline')); }
+
+async function cmdAsk(args) {
+  const { classifyIntent } = loadModes();
+  const { handleCalendar, handleStudy, handleChurch, handlePrayer, handlePastoral, handleOps } = loadPipeline();
+
+  // Parse optional --mode override
+  let forcedMode = null;
+  const positional = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--mode' && args[i + 1]) { forcedMode = args[++i]; }
+    else positional.push(args[i]);
+  }
+  const query = positional.join(' ');
+  if (!query) printError('Usage: ask [--mode <mode>] <query...>');
+
+  const mode = forcedMode || classifyIntent(query);
+  let answer;
+  switch (mode) {
+    case 'calendar': answer = await handleCalendar(query); break;
+    case 'study':    answer = await handleStudy(query); break;
+    case 'church':   answer = await handleChurch(query, {}); break;
+    case 'prayer':   answer = await handlePrayer(query); break;
+    case 'pastoral': answer = await handlePastoral(query); break;
+    case 'ops':      answer = await handleOps(query, {}); break;
+    default:         answer = { type: 'general', answer: 'No specialized handler; routed to general.' };
+  }
+  printJSON({ query, mode, ...answer });
+}
+
+async function cmdPastoral(args) {
+  const { handlePastoral } = loadPipeline();
+  const query = args.join(' ');
+  if (!query) printError('Usage: pastoral <query...>');
+  printJSON({ query, mode: 'pastoral', ...(await handlePastoral(query)) });
+}
+
+async function cmdOps(args) {
+  const { handleOps } = loadPipeline();
+  const query = args.join(' ');
+  if (!query) printError('Usage: ops <query...>');
+  printJSON({ query, mode: 'ops', ...(await handleOps(query, {})) });
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +572,9 @@ async function main() {
     else if (cmd === 'scripture')  await cmdScripture(args);
     else if (cmd === 'church')     await cmdChurch(args);
     else if (cmd === 'mode')       await cmdMode(args);
+    else if (cmd === 'ask')        await cmdAsk(args);
+    else if (cmd === 'pastoral')   await cmdPastoral(args);
+    else if (cmd === 'ops')        await cmdOps(args);
     else if (cmd === 'procedures') await cmdProcedures(args);
     else if (cmd === 'knowledge')  await cmdKnowledge(args);
     else if (cmd === 'tasks')      await cmdTasks(args);
