@@ -23,6 +23,7 @@ const { CronManager } = require('./cron/cronManager');
 const { QueryPipeline } = require('./queryPipeline/pipeline');
 const { ChurchFinder } = require('./churchFinder');
 const { BtwQueue } = require('./session/btwQueue');
+const { ModeRouter } = require('./router/modeRouter');
 const { createServer } = require('./api/server');
 const logger = require('./util/logger');
 
@@ -53,7 +54,8 @@ function main() {
   const governance = new GovernanceManager({ db, omstudio });
   logger.info('omstudio_governance', { transport: config.omstudio.transport });
 
-  const orchestrator = new Orchestrator({ db, aiClient, governance, ragRetriever });
+  const modeRouter = new ModeRouter({ defaultMode: config.modes && config.modes.defaultMode });
+  const orchestrator = new Orchestrator({ db, aiClient, governance, ragRetriever, modeRouter });
 
   const btwQueue = new BtwQueue({ db });
   orchestrator.btwQueue = btwQueue;
