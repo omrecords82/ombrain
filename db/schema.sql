@@ -294,10 +294,23 @@ CREATE TABLE IF NOT EXISTS correction_memory (
   submitted_by        TEXT NOT NULL,          -- operator id or 'system'
   tags_json           TEXT,                   -- JSON array for retrieval
   embedding           BLOB,                   -- float32 vector for semantic search
-  created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Spec §5 columns (migration 2026-06-27_spec5_spec6.sql)
+  source_decision_id  TEXT,
+  session_id          TEXT,
+  question_type       TEXT,                   -- service_restart_recommendation | schema_change_governance | ...
+  verdict             TEXT,                   -- incorrect | partially_correct | overconfident | stuck
+  original_output     TEXT,
+  correction          TEXT,
+  correction_source   TEXT,                   -- operator_override | auto_loop_detect | auto_stumble_detect
+  correction_version  INTEGER NOT NULL DEFAULT 1,
+  active              INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_correction_type ON correction_memory(correction_type);
 CREATE INDEX IF NOT EXISTS idx_correction_decision ON correction_memory(decision_id);
+CREATE INDEX IF NOT EXISTS idx_correction_question_type ON correction_memory(question_type);
+CREATE INDEX IF NOT EXISTS idx_correction_active ON correction_memory(active);
+CREATE INDEX IF NOT EXISTS idx_correction_session ON correction_memory(session_id);
 
 -- Append-only guard: corrections are never modified or deleted.
 CREATE TRIGGER IF NOT EXISTS correction_memory_no_update
@@ -317,18 +330,27 @@ END;
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS theological_memory (
   id              TEXT PRIMARY KEY,           -- UUID
-  category        TEXT NOT NULL,             -- scripture | catechism | council | patristic | liturgy | belief
-  subcategory     TEXT,                       -- e.g. "OT", "NT", "Nicaea I", "Chrysostom"
-  reference_key   TEXT NOT NULL,             -- e.g. "Gen.1.1", "Catechism.Q47", "Nicaea.Canon.1"
+  category        TEXT NOT NULL,             -- scripture | catechism | council | patristic | liturgy | belief | saint
+  subcategory     TEXT,                       -- e.g. "OT", "NT", "Nicaea I", "Chrysostom", "Calendar"
+  reference_key   TEXT NOT NULL,             -- e.g. "Gen.1.1", "Catechism.Q47", "Saint.John.Chrysostom"
   title           TEXT,
   body            TEXT NOT NULL,             -- the text content
-  source          TEXT NOT NULL,             -- e.g. "Brenton LXX 1851", "St. Philaret's Catechism"
+  source          TEXT NOT NULL,             -- e.g. "Brenton LXX 1851", "Orthodox Saints Calendar (sample)"
   language        TEXT NOT NULL DEFAULT 'en',
   embedding       BLOB,
-  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Spec §6 columns (migration 2026-06-27_spec5_spec6.sql)
+  source_ref      TEXT,
+  book            TEXT,                       -- scripture book name (e.g. "Genesis")
+  chapter         INTEGER,
+  verse_start     INTEGER,
+  verse_end       INTEGER,
+  topic_tags      TEXT                        -- comma-separated or JSON topic tags
 );
 CREATE INDEX IF NOT EXISTS idx_theo_category ON theological_memory(category);
 CREATE INDEX IF NOT EXISTS idx_theo_ref ON theological_memory(reference_key);
+CREATE INDEX IF NOT EXISTS idx_theo_book_chapter ON theological_memory(book, chapter);
+CREATE INDEX IF NOT EXISTS idx_theo_topic_tags ON theological_memory(topic_tags);
 
 -- Theological content is immutable once seeded.
 CREATE TRIGGER IF NOT EXISTS theological_memory_no_update
@@ -363,11 +385,24 @@ CREATE TABLE IF NOT EXISTS church_memory (
   source          TEXT NOT NULL,              -- google_places | aob_directory | manual
   last_verified   TEXT,
   created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  -- P1 church finder columns (migration 2026-06-27_p1_church_btw_schema.sql)
+  google_maps_url TEXT,
+  rating          REAL,
+  rating_count    INTEGER,
+  canonical       INTEGER,                    -- 1=canonical, 0=non-canonical, NULL=unknown
+  service_schedule_json TEXT,
+  opening_hours_json TEXT,
+  hours_source    TEXT NOT NULL DEFAULT 'google_places',
+  last_fetched_at TEXT,
+  zip             TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_church_jurisdiction ON church_memory(jurisdiction);
 CREATE INDEX IF NOT EXISTS idx_church_location ON church_memory(state, city);
 CREATE INDEX IF NOT EXISTS idx_church_place_id ON church_memory(place_id);
+CREATE INDEX IF NOT EXISTS idx_church_zip ON church_memory(zip);
+CREATE INDEX IF NOT EXISTS idx_church_canonical ON church_memory(canonical);
+CREATE INDEX IF NOT EXISTS idx_church_last_fetched ON church_memory(last_fetched_at);
 
 -- -----------------------------------------------------------------------------
 -- 15. btw_queue — "By The Way" interrupt queue for non-urgent Brain notifications.
@@ -382,7 +417,17 @@ CREATE TABLE IF NOT EXISTS btw_queue (
   deliver_at      TEXT,                       -- ISO-8601 if scheduled
   source_ref      TEXT,                       -- what triggered this BTW
   created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-  delivered_at    TEXT
+  delivered_at    TEXT,
+  -- Session-scoped BTW columns (migration 2026-06-27_p1_church_btw_schema.sql)
+  session_id      TEXT,
+  btw_id          TEXT,
+  question        TEXT,
+  mode            TEXT,
+  answer          TEXT,
+  answered        INTEGER NOT NULL DEFAULT 0,
+  answered_at     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_btw_delivered ON btw_queue(delivered);
 CREATE INDEX IF NOT EXISTS idx_btw_deliver_at ON btw_queue(deliver_at);
+CREATE INDEX IF NOT EXISTS idx_btw_session ON btw_queue(session_id);
+CREATE INDEX IF NOT EXISTS idx_btw_answered ON btw_queue(answered);
