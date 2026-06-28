@@ -1,8 +1,8 @@
 # OM Brain — Phase Tracker
 
-**Host:** auth01 / om-dev (`192.168.1.254`)  
+**Host:** om-dev (`192.168.1.254`) — **not** auth01 (FreeIPA is `.252`)  
 **Deploy path:** `/opt/om-brain` · env `/etc/om-brain/om-brain.env`  
-**Last updated:** 2026-06-27 (Phase 1 verification)
+**Last updated:** 2026-06-28 (host inventory tooling)
 
 ---
 
@@ -10,28 +10,31 @@
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Deploy on auth01 | ✅ Done | `om-brain.service` active, `/opt/om-brain`, slice isolated |
+| Deploy on om-dev (.254) | ✅ Done | `om-brain.service` active, `/opt/om-brain`, slice isolated |
 | Event adapter | ✅ On | Polls `192.168.1.239:7060/api/platform/events` every 30s |
 | Inventory adapter | ✅ On | Polls `/api/platform/inventory` every 60s |
 | Log adapter | ⏸ Disabled | `BRAIN_ENABLE_LOG_ADAPTER=false` — WS bridge upstream unstable (see Phase 1 note) |
 | `OMSTUDIO_TRANSPORT` | ✅ `http` | Live Fork A to `.242/omstudio-embed` |
 | `BRAIN_OPS_JWT` | ✅ Provisioned | `brain_ingest@orthodoxmetrics.com` via `deploy/provision-brain-ingest.sh` |
-| `OMSTUDIO_SERVICE_TOKEN` | ✅ Matched | SHA256 hash identical on auth01 and `.242` (verified 2026-06-27) |
+| `OMSTUDIO_SERVICE_TOKEN` | ✅ Matched | SHA256 hash identical on om-dev (.254) and `.242` (verified 2026-06-27) |
 | Governance E2E | ✅ Verified | diagnose → audit → approve → webhook → APPROVED (2026-06-27) |
+| Host inventory snapshot | ✅ On main | `om-brain/inventory/hosts.json` + `collect-hosts.js` → `HOST-SNAPSHOT.md` |
 
 ### Host references (do not confuse)
 
 | Wrong (legacy docs) | Correct |
 |---------------------|---------|
-| Keycloak on auth01 `.254` | Keycloak on **auth0 `.253`** (Docker) |
+| Brain / Keycloak on auth01 `.254` | Brain on **om-dev `.254`**; Keycloak on **auth1/keycloak `.253`** (Docker) |
+| auth01 = Brain host | **auth01 = FreeIPA `.252`** (+ `.37`) |
 | MariaDB on `.77` (production) | Central OM DB on **`.241`**; `.77` is replica-sync target only |
 | OMStudio governance on `.241` | Fork A on **`.242`** (`omstudio_db`, nginx `/omstudio-embed`) |
+| omai-ops undocumented | **ops `.40`** → `/srv/omai-ops` |
 
 ---
 
 ## Phase 1 — Governance & ingest verification
 
-- [x] Token hash match auth01 ↔ OMStudio `.242`
+- [x] Token hash match om-dev (.254) ↔ OMStudio `.242`
 - [x] POST `audit-events` smoke (201, not 401)
 - [x] Human-only `/diagnose` → SUBMITTED approval + audit row in MariaDB
 - [x] Superadmin decision → webhook `:8391` → Brain `ingest-status` → APPROVED
@@ -56,7 +59,7 @@ See `docs/om-brain/94-phase1-verification-note.md` for smoke-test evidence (no s
 ## Ops quick reference
 
 ```bash
-# Health
+# Health (on om-dev .254)
 curl -s http://127.0.0.1:8390/health | jq .
 
 # VERIFY.md full checklist
@@ -64,5 +67,8 @@ om-brain/deploy/VERIFY.md
 
 # Re-provision ingest JWT (on .239)
 set -a && source /var/www/omai/.env.omai && set +a
-sudo -E om-brain/deploy/provision-brain-ingest.sh --update-auth01
+sudo -E om-brain/deploy/provision-brain-ingest.sh --update-om-dev
+
+# Refresh host snapshot (commit result)
+cd om-brain && node scripts/collect-hosts.js
 ```
