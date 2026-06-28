@@ -39,7 +39,7 @@ fi
 
 echo "[rollback] restoring ${TARGET} -> ${APP_DIR}"
 rsync -a --delete \
-  --exclude 'data' \
+  --exclude '/data' \
   --exclude '.env' \
   "${TARGET}/" "${APP_DIR}/"
 

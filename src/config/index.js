@@ -182,6 +182,25 @@ const config = Object.freeze({
     // Number of theological_memory chunks retrieved per semantic search.
     topK: num(env.BRAIN_THEOLOGY_TOP_K, 8),
   },
+
+  // -------------------------------------------------------------------------
+  // Communication modes router (§8)
+  // -------------------------------------------------------------------------
+  modes: {
+    // Default communication mode when classification yields nothing actionable.
+    defaultMode: env.BRAIN_DEFAULT_MODE || 'knowledge',
+    // When true, the orchestrator drains the by-the-way (BTW) follow-up queue
+    // after answering the primary query.
+    btwQueueEnabled: bool(env.BRAIN_BTW_QUEUE_ENABLED, true),
+  },
+
+  // -------------------------------------------------------------------------
+  // Orthodox calendar engine (§6)
+  // -------------------------------------------------------------------------
+  calendar: {
+    // Deterministic Paschalion/feasts/fasting/saints. No LLM, no network.
+    enabled: bool(env.BRAIN_CALENDAR_ENABLED, true),
+  },
 });
 
 module.exports = { config };

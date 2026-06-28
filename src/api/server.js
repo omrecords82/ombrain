@@ -548,6 +548,44 @@ function createServer(deps = {}) {
     return res.json({ count: history.length, items: history });
   });
 
+  /**
+   * GET /brain/session/:id
+   * Session summary: recent decisions for the session plus the by-the-way
+   * follow-up history. Read-only; no LLM. Used to inspect what the Brain has
+   * decided/queued within a conversation session.
+   */
+  app.get('/brain/session/:id', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const sessionId = req.params.id;
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+
+    let decisions = [];
+    try {
+      const all = db.listDecisions(500) || [];
+      decisions = all.filter((d) => d && d.session_id === sessionId).slice(0, limit);
+    } catch (_) {
+      decisions = [];
+    }
+
+    let btw = [];
+    if (orchestrator && orchestrator.btwQueue && typeof orchestrator.btwQueue.history === 'function') {
+      try {
+        btw = orchestrator.btwQueue.history(sessionId) || [];
+      } catch (_) {
+        btw = [];
+      }
+    }
+
+    return res.json({
+      ok: true,
+      session_id: sessionId,
+      decision_count: decisions.length,
+      decisions,
+      btw_count: btw.length,
+      btw_history: btw,
+    });
+  });
+
   // -------------------------------------------------------------------------
   // §5 — Correction memory: full feedback REST surface
   // -------------------------------------------------------------------------
@@ -794,6 +832,67 @@ function createServer(deps = {}) {
       ok: true,
       date: date.toISOString().slice(0, 10),
       season,
+    });
+  });
+
+  /**
+   * GET /brain/calendar/saints?month=8&day=6&calendar=old&year=2026
+   * Returns the saints commemorated on a specific date. `calendar` is 'old'
+   * (interpret month/day as the Julian O.S. date, default) or 'new' (interpret
+   * as the Gregorian civil N.S. date). Deterministic — no LLM.
+   *
+   * Response: { date, calendar, year, count, saints: [...] }
+   */
+  app.get('/brain/calendar/saints', (req, res) => {
+    const cal = loadCalendar();
+    if (!cal || typeof cal.saintsForDate !== 'function') {
+      return res.status(503).json({ ok: false, error: 'saints_engine_unavailable' });
+    }
+    const month = parseInt(req.query.month, 10);
+    const day = parseInt(req.query.day, 10);
+    if (isNaN(month) || isNaN(day) || month < 1 || month > 12 || day < 1 || day > 31) {
+      return res.status(400).json({ ok: false, error: 'month_and_day_required', hint: 'month=1-12 & day=1-31' });
+    }
+    const calendar = req.query.calendar === 'new' ? 'new' : 'old';
+    const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
+    const saints = cal.saintsForDate(month, day, calendar, year);
+    return res.json({
+      ok: true,
+      date: `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+      calendar,
+      year,
+      count: saints.length,
+      saints,
+    });
+  });
+
+  /**
+   * GET /brain/calendar/today?calendar=old
+   * Today's season, fasting rule, and saints (server date, UTC).
+   * The civil server date is treated as the New-Style date; we report the
+   * saints commemorated on that N.S. date plus the active fasting rule.
+   *
+   * Response: { date, season, fasting, saints }
+   */
+  app.get('/brain/calendar/today', (req, res) => {
+    const cal = loadCalendar();
+    if (!cal) return res.status(503).json({ ok: false, error: 'calendar_module_unavailable' });
+    const now = new Date();
+    const month = now.getUTCMonth() + 1;
+    const day = now.getUTCDate();
+    const year = now.getUTCFullYear();
+    const season = getLiturgicalSeason(now, cal);
+    const fasting = typeof cal.getFastingRule === 'function' ? cal.getFastingRule(now) : null;
+    const saints = typeof cal.saintsForDate === 'function'
+      ? cal.saintsForDate(month, day, 'new', year)
+      : [];
+    return res.json({
+      ok: true,
+      date: now.toISOString().slice(0, 10),
+      season,
+      fasting,
+      saint_count: saints.length,
+      saints,
     });
   });
 

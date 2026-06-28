@@ -45,7 +45,7 @@ if [[ -d "${APP_DIR}" ]] && [[ -n "$(ls -A "${APP_DIR}" 2>/dev/null || true)" ]]
   TS="$(date -u +%Y%m%dT%H%M%SZ)"
   echo "[deploy] backing up current release to ${BACKUP_ROOT}/${TS}"
   mkdir -p "${BACKUP_ROOT}/${TS}"
-  rsync -a --exclude 'data' --exclude '.env' --exclude 'node_modules' \
+  rsync -a --exclude '/data' --exclude '.env' --exclude 'node_modules' \
     "${APP_DIR}/" "${BACKUP_ROOT}/${TS}/"
   # Keep only the 5 most recent backups.
   ls -1dt "${BACKUP_ROOT}"/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
@@ -56,7 +56,7 @@ echo "[deploy] syncing application code to ${APP_DIR}"
 mkdir -p "${APP_DIR}"
 rsync -a --delete \
   --exclude '.git' \
-  --exclude 'data' \
+  --exclude '/data' \
   --exclude '.env' \
   "${SRC_DIR}/" "${APP_DIR}/"
 
