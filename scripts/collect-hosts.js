@@ -84,6 +84,22 @@ async function resolveHostnames(names, domain) {
   return results;
 }
 
+function runnerIsHost(host, runnerHostname) {
+  const hn = String(runnerHostname || '').toLowerCase();
+  const labels = [host.name, ...(host.aliases || [])].map((n) => n.toLowerCase());
+  if (labels.some((n) => hn === n || hn.startsWith(`${n}.`))) return true;
+  if (host.name === 'om-dev' && (hn.includes('omdev') || hn.includes('om-dev'))) return true;
+  return false;
+}
+
+async function probePort(hostIp, port, timeoutMs, tryLocalhost) {
+  if (await tcpReachable(hostIp, port, timeoutMs)) return true;
+  if (tryLocalhost && hostIp !== '127.0.0.1') {
+    return tcpReachable('127.0.0.1', port, timeoutMs);
+  }
+  return false;
+}
+
 function tcpReachable(ip, port, timeoutMs) {
   return new Promise((resolve) => {
     const socket = new net.Socket();
@@ -108,24 +124,39 @@ function declaredIps(host) {
   return [...new Set(ips.filter(Boolean))];
 }
 
-function dnsDrift(declared, resolvedAddresses) {
-  if (!resolvedAddresses.length) return 'dns_unresolved';
+function dnsDrift(declared, resolvedAddresses, declaredPrimary) {
+  if (!resolvedAddresses.length) return { drift: 'dns_unresolved', note: null };
   const ok = resolvedAddresses.some((a) => declared.includes(a));
-  return ok ? 'match' : 'mismatch';
+  if (!ok) return { drift: 'mismatch', note: null };
+  const loopbackOnly = resolvedAddresses.filter(
+    (a) => a.startsWith('127.') && !declared.includes(a),
+  );
+  if (
+    loopbackOnly.length &&
+    declaredPrimary &&
+    !String(declaredPrimary).startsWith('127.')
+  ) {
+    return {
+      drift: 'match',
+      note: `local loopback resolution (${loopbackOnly.join(', ')}) — LAN A-record also present via alias`,
+    };
+  }
+  return { drift: 'match', note: null };
 }
 
-async function verifyHost(host, domain, timeoutMs) {
+async function verifyHost(host, domain, timeoutMs, runnerHostname) {
   const verifiedAt = new Date().toISOString();
   const declared = declaredIps(host);
   const lookupNames = [host.name, ...(host.aliases || [])];
   const dnsResults = await resolveHostnames(lookupNames, domain);
   const resolvedAddresses = [...new Set(dnsResults.filter((r) => r.address).map((r) => r.address))];
-  const drift = dnsDrift(declared, resolvedAddresses);
+  const { drift, note } = dnsDrift(declared, resolvedAddresses, host.ip);
 
   const ports = host.key_ports || [];
   const portResults = [];
+  const tryLocalhost = runnerIsHost(host, runnerHostname);
   for (const port of ports) {
-    const reachable = await tcpReachable(host.ip, port, timeoutMs);
+    const reachable = await probePort(host.ip, port, timeoutMs, tryLocalhost);
     portResults.push({
       port,
       status: reachable ? 'reachable' : 'unreachable',
@@ -140,6 +171,7 @@ async function verifyHost(host, domain, timeoutMs) {
     role: host.role,
     dns: dnsResults,
     dns_drift: drift,
+    dns_note: note,
     ports: portResults,
     verified_at: verifiedAt,
   };
@@ -204,12 +236,13 @@ function buildMarkdown(inventory, results, opts) {
   );
 
   for (const r of results) {
-    const driftBadge =
+    let driftBadge =
       r.dns_drift === 'match'
         ? 'match'
         : r.dns_drift === 'mismatch'
           ? '**mismatch**'
           : 'dns_unresolved';
+    if (r.dns_note) driftBadge += ` _(info: ${r.dns_note})_`;
     lines.push(
       `| ${r.name} | \`${r.declared_ip}\` | ${r.role || '—'} | ${formatDnsCell(r.dns)} | ${formatPortsCell(r.ports)} | ${driftBadge} |`,
     );
@@ -227,6 +260,9 @@ function buildMarkdown(inventory, results, opts) {
     }
     lines.push(`| Role | ${r.role || '—'} |`);
     lines.push(`| DNS drift | \`${r.dns_drift}\` |`);
+    if (r.dns_note) {
+      lines.push(`| DNS note | ${r.dns_note} |`);
+    }
     lines.push(`| Verified at | ${r.verified_at} |`);
     lines.push('');
     if (r.ports.length) {
@@ -279,11 +315,12 @@ async function main() {
 
   const inventory = JSON.parse(fs.readFileSync(opts.hostsPath, 'utf8'));
   const domain = inventory.domain || 'om.internal';
+  const runnerHostname = require('os').hostname();
   const results = [];
 
   for (const host of inventory.hosts) {
     // eslint-disable-next-line no-await-in-loop
-    results.push(await verifyHost(host, domain, opts.timeoutMs));
+    results.push(await verifyHost(host, domain, opts.timeoutMs, runnerHostname));
   }
 
   const markdown = buildMarkdown(inventory, results, opts);

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# deploy.sh — repeatable installer for the OrthodoxMetrics Brain on auth01
+# deploy.sh — repeatable installer for the OrthodoxMetrics Brain on om-dev
 # (192.168.1.254). Run by the user's team WITH superadmin authorization.
 #
 # This script installs the Brain as an isolated, hardened systemd service inside
@@ -90,6 +90,13 @@ install -m 0644 "${APP_DIR}/deploy/om-brain.service" /etc/systemd/system/om-brai
 systemctl daemon-reload
 systemctl enable om-brain.service
 systemctl restart om-brain.service
+
+echo "[deploy] refreshing agent snapshots (HOST-SNAPSHOT, SCHEMA-SNAPSHOT)"
+if [[ -x "${APP_DIR}/deploy/post-deploy-snapshots.sh" ]]; then
+  SNAPSHOT_GIT_REPO="${SNAPSHOT_GIT_REPO:-}" \
+    bash "${APP_DIR}/deploy/post-deploy-snapshots.sh" "${APP_DIR}" || \
+    echo "[deploy] WARNING: post-deploy-snapshots failed (non-fatal)"
+fi
 
 echo "[deploy] done. Follow deploy/VERIFY.md to confirm the definition-of-done."
 echo "[deploy] quick check: systemctl status om-brain.service --no-pager"
