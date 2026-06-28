@@ -41,7 +41,7 @@
 - [x] Disable log adapter until WS upstream bridge stable
 - [x] Add `om-brain` to platform inventory (`om-dev`)
 - [ ] Re-enable log adapter after OMAI `:7060` → OM `:3001` logger WS bridge fixed
-- [ ] Manus/build team: Phase 2 scope sign-off (memory layers, calendar, church finder)
+- [x] Manus/build team: Phase 2 scope sign-off (memory layers, calendar, church finder) — SIGNED OFF 2026-06-28 by user (Google Places deferred)
 
 See `docs/om-brain/94-phase1-verification-note.md` for smoke-test evidence (no secrets).
 
