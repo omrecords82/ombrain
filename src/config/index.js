@@ -60,7 +60,27 @@ const config = Object.freeze({
     reasoningModel: env.BRAIN_LLM_REASONING_MODEL || 'qwen2.5:7b-instruct-q4_K_M',
     classifierModel: env.BRAIN_LLM_CLASSIFIER_MODEL || 'qwen2.5:3b-instruct-q4_K_M',
     embeddingModel: env.BRAIN_LLM_EMBEDDING_MODEL || 'nomic-embed-text',
+    // Optional separate base URL for the embedding endpoint. Falls back to the
+    // primary baseUrl when unset (single-endpoint deployments).
+    embeddingBaseUrl: env.BRAIN_LLM_EMBEDDING_BASE_URL || env.BRAIN_LLM_BASE_URL || 'http://127.0.0.1:11434/v1',
     timeoutMs: num(env.BRAIN_LLM_TIMEOUT_MS, 60000),
+    // Optional fallback provider for chat completions when the primary errors.
+    // When fallbackBaseUrl is empty, no fallback is attempted.
+    fallbackEnabled: bool(env.BRAIN_LLM_FALLBACK_ENABLED, false),
+    fallbackBaseUrl: env.BRAIN_LLM_FALLBACK_BASE_URL || '',
+    fallbackApiKey: env.BRAIN_LLM_FALLBACK_API_KEY || '',
+    fallbackModel: env.BRAIN_LLM_FALLBACK_MODEL || '',
+  },
+
+  // -------------------------------------------------------------------------
+  // Orthodox church finder (§7)
+  // -------------------------------------------------------------------------
+  churchFinder: {
+    enabled: bool(env.BRAIN_CHURCH_FINDER_ENABLED, true),
+    // Cached parish records older than this are considered stale.
+    cacheTtlHours: num(env.BRAIN_CHURCH_FINDER_CACHE_TTL_HOURS, 720),
+    // Default search radius in miles for nearby lookups.
+    defaultRadiusMiles: num(env.BRAIN_CHURCH_FINDER_DEFAULT_RADIUS_MILES, 25),
   },
 
   ingest: {
