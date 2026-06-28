@@ -143,4 +143,60 @@ class RagRetriever {
   }
 }
 
-module.exports = { RagRetriever, deterministicEmbed, DEFAULT_DIM };
+/**
+ * Factory: build a RagRetriever wired to the live LiteLLM/Ollama embedder, with
+ * a GUARDED fallback to the deterministic embedder.
+ *
+ * Behaviour:
+ *   - Calls `aiClient.embed(text)` (LAN-only, breaker- and redaction-guarded).
+ *   - On success → uses the real semantic vector.
+ *   - On any failure (breaker block, inference unavailable, error) → falls back
+ *     to the deterministic embedder so retrieval still returns *something*
+ *     deterministic rather than throwing. Each fallback is logged so silent
+ *     degradation is observable.
+ *   - If `liveEmbeddingsEnabled` is false (or no aiClient given), it skips the
+ *     live path entirely and uses the deterministic embedder.
+ *
+ * This keeps the LAN-only doctrine intact (the retriever never calls the
+ * network itself — only the guarded aiClient.embed does) while making live
+ * embeddings the default when the model is reachable.
+ *
+ * @param {object} opts
+ * @param {object} [opts.aiClient]   BrainAIClient-like with async embed(text)=>{ok,vector}
+ * @param {boolean}[opts.liveEmbeddingsEnabled=true]
+ * @param {number} [opts.dim]        fallback embedder dim (default 256)
+ * @param {object} [opts.logger]
+ * @returns {RagRetriever}
+ */
+function createRagRetriever(opts = {}) {
+  const logger = opts.logger || { info: () => {}, warn: () => {} };
+  const liveEnabled = opts.liveEmbeddingsEnabled !== false && !!opts.aiClient;
+  const fallbackDim = opts.dim || DEFAULT_DIM;
+
+  if (!liveEnabled) {
+    return new RagRetriever({ dim: fallbackDim, logger });
+  }
+
+  const ai = opts.aiClient;
+  const embed = async (text) => {
+    try {
+      const res = await ai.embed(text);
+      if (res && res.ok && Array.isArray(res.vector) && res.vector.length) {
+        return res.vector;
+      }
+      logger.warn('rag_embed_fallback', {
+        reason: (res && res.escalation && res.escalation.reason) || 'embed_not_ok',
+      });
+    } catch (e) {
+      logger.warn('rag_embed_fallback', { reason: 'embed_threw', name: e && e.name });
+    }
+    // Guarded fallback — deterministic, never throws.
+    return deterministicEmbed(text, fallbackDim);
+  };
+
+  const retriever = new RagRetriever({ embed, dim: fallbackDim, logger });
+  retriever.usingFallback = false; // live path is primary; embed() degrades per-call
+  return retriever;
+}
+
+module.exports = { RagRetriever, createRagRetriever, deterministicEmbed, DEFAULT_DIM };

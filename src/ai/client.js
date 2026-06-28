@@ -46,11 +46,14 @@ class BrainAIClient {
    * @param {boolean} [opts.production] override production flag
    * @param {Function} [opts.transport] injectable transport for tests:
    *        async ({model, messages, kind}) => ({content})
+   * @param {Function} [opts.embedTransport] injectable embedding transport for tests:
+   *        async ({model, input}) => ({vector})
    */
   constructor(opts = {}) {
     this.cfg = Object.assign({}, config.llm, opts.cfg || {});
     this.production = opts.production === undefined ? config.isProduction : opts.production;
     this.transport = opts.transport || null;
+    this.embedTransport = opts.embedTransport || null;
     this._sdk = null;
   }
 
@@ -127,6 +130,70 @@ class BrainAIClient {
     } catch (e) {
       // Local-inference failure → halt + escalate. NEVER fall back to external.
       logger.error('local_inference_failure', { kind, name: e && e.name });
+      return {
+        ok: false,
+        escalation: breaker.buildEscalation(sessionId, 'inference_failure', e && e.message),
+      };
+    }
+  }
+
+  /**
+   * Embedding pipeline — produce a dense vector for RAG retrieval.
+   *
+   * Same safety discipline as _chat: circuit breaker first (LAN-only), redaction
+   * before send, NEVER a silent external fallback. Returns
+   *   { ok: true, vector: number[] }            on success
+   *   { ok: false, escalation }                  on breaker/inference failure
+   * so callers can decide whether to degrade to the deterministic embedder.
+   *
+   * An injectable `embedTransport` (async ({model,input}) => ({vector})) is used
+   * for tests so this path is exercised without the openai SDK or a live model.
+   *
+   * @param {string} text
+   * @param {object} [opts]
+   * @param {string} [opts.sessionId]
+   * @returns {Promise<{ok:boolean, vector?:number[], escalation?:object}>}
+   */
+  async embed(text, opts = {}) {
+    const sessionId = opts.sessionId;
+    // 1) Circuit breaker — refuse non-LAN/external hosts.
+    try {
+      this.assertEndpointAllowed();
+    } catch (e) {
+      logger.error('circuit_breaker_blocked_embed', { reason: e.verdict && e.verdict.reason });
+      return { ok: false, escalation: breaker.buildEscalation(sessionId, 'circuit_breaker', e.verdict) };
+    }
+    // 2) Redaction — strip secrets/tenant ids from the text BEFORE send.
+    const safe = redactForModel(String(text == null ? '' : text));
+    const model = this.cfg.embeddingModel;
+    // 3) Transport (injectable for tests) or real SDK.
+    try {
+      if (this.embedTransport) {
+        const res = await this.embedTransport({ model, input: safe });
+        return { ok: true, vector: res.vector };
+      }
+      const sdk = this._getSdk();
+      if (!sdk || !sdk.embeddings || typeof sdk.embeddings.create !== 'function') {
+        return {
+          ok: false,
+          escalation: breaker.buildEscalation(
+            sessionId,
+            'inference_unavailable',
+            'openai SDK / embeddings endpoint not available; local embedder could not be constructed',
+          ),
+        };
+      }
+      const resp = await sdk.embeddings.create({ model, input: safe });
+      const vector = resp && resp.data && resp.data[0] ? resp.data[0].embedding : null;
+      if (!Array.isArray(vector) || vector.length === 0) {
+        return {
+          ok: false,
+          escalation: breaker.buildEscalation(sessionId, 'inference_failure', 'empty embedding returned'),
+        };
+      }
+      return { ok: true, vector };
+    } catch (e) {
+      logger.error('local_embed_failure', { name: e && e.name });
       return {
         ok: false,
         escalation: breaker.buildEscalation(sessionId, 'inference_failure', e && e.message),
