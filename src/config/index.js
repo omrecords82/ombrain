@@ -146,6 +146,8 @@ const config = Object.freeze({
     procedureStaleAfterDays: num(env.BRAIN_PROCEDURE_STALE_AFTER_DAYS, 90),
     // Minimum confidence score for a procedure to be used without LLM review.
     procedureMinConfidence: num(env.BRAIN_PROCEDURE_MIN_CONFIDENCE, 0.80),
+    // When true, RagRetriever uses BrainAIClient.embed (Ollama nomic-embed-text).
+    liveEmbeddingsEnabled: bool(env.BRAIN_LIVE_EMBEDDINGS_ENABLED, true),
     // Number of active corrections for a question_type before the Brain
     // auto-escalates that question_type to requires_human_superadmin.
     stumbleThreshold: num(env.BRAIN_STUMBLE_THRESHOLD, 3),

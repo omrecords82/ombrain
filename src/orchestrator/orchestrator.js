@@ -90,6 +90,7 @@ class Orchestrator {
     this.governance = deps.governance || null;
     this.modeRouter = deps.modeRouter || null;
     this.btwQueue = deps.btwQueue || null;
+    this.ragRetriever = deps.ragRetriever || null;
     this.doctrineText = this._loadDoctrine();
   }
 
@@ -175,7 +176,7 @@ class Orchestrator {
     return results;
   }
 
-  _retrieveFromMemory(queryText, owningSystem) {
+  async _retrieveFromMemory(queryText, owningSystem) {
     if (!this.db || !config.learning.enabled) {
       return { hit: false, source: 'learning_disabled', content: null, procedure: null };
     }
@@ -205,6 +206,15 @@ class Orchestrator {
     }
 
     try {
+      if (this.ragRetriever && typeof this.db.listKnowledge === 'function') {
+        const rows = this.db.listKnowledge({ limit: 200 });
+        const ranked = await this.ragRetriever.retrieve(q, rows, { k: 5, textField: 'body' });
+        if (ranked.length > 0) {
+          const hits = ranked.map((r) => ({ ...r.meta, body: r.text, _rag_score: r.score }));
+          logger.info('retrieval_hit_knowledge_rag', { count: hits.length });
+          return { hit: true, source: 'knowledge_memory', content: hits, procedure: null };
+        }
+      }
       const hits = this.db.searchKnowledge(q, { limit: 5 });
       if (hits && hits.length > 0) {
         logger.info('retrieval_hit_knowledge', { count: hits.length });
@@ -275,14 +285,22 @@ class Orchestrator {
     return /\b(god|christ|jesus|holy spirit|trinity|theosis|salvation|church|orthodox|saint|scripture|bible|gospel|epistle|liturgy|sacrament|mystery|baptism|eucharist|chrismation|confession|unction|marriage|ordination|pascha|easter|fasting|prayer|icon|theotokos|virgin mary|apostle|prophet|martyr|father|council|canon|dogma|theology|doctrine|sin|repentance|resurrection|incarnation|logos|hypostasis|ousia|physis|chalcedon|nicaea|ephesus|constantinople|ecumenical|catechism|creed|nicene|apostles)\b/.test(t);
   }
 
-  _recallTheology(question) {
+  async _recallTheology(question) {
     if (!this.db) return [];
     const { config } = require('../config');
     if (!config.theology || !config.theology.enabled) return [];
     const topK = config.theology.topK || 8;
     try {
+      if (this.ragRetriever && typeof this.db.listTheology === 'function') {
+        const rows = this.db.listTheology({ limit: 500 });
+        const ranked = await this.ragRetriever.retrieve(question, rows, { k: topK, textField: 'body' });
+        if (ranked.length > 0) {
+          return ranked.map((r) => ({ ...r.meta, body: r.text, _rag_score: r.score }));
+        }
+      }
       return this.db.searchTheology(question, { limit: topK });
-    } catch (_) {
+    } catch (e) {
+      logger.warn('recall_theology_error', { name: e && e.name });
       return [];
     }
   }
@@ -402,7 +420,7 @@ class Orchestrator {
       if (mode === 'study') {
         // Prefer theology RAG if enabled and question is theological
         if (this._isTheologicalQuestion(q)) {
-          const chunks = this._recallTheology(q);
+          const chunks = await this._recallTheology(q);
           if (chunks.length > 0) {
             const citations = chunks.map((c) => ({
               source_ref: c.source_ref || c.reference_key,
@@ -499,7 +517,7 @@ class Orchestrator {
     if (this._isTheologicalQuestion(questionText)) {
       const { config } = require('../config');
       if (config.theology && config.theology.enabled) {
-        const chunks = this._recallTheology(questionText);
+        const chunks = await this._recallTheology(questionText);
         const citations = chunks.map((c) => ({
           source_ref: c.source_ref || c.reference_key,
           source: c.source,
@@ -531,7 +549,7 @@ class Orchestrator {
     const typeCorrections = this._recallCorrectionsByType(questionType);
 
     const queryText = JSON.stringify(redactForLog(proposal || incident));
-    const retrieval = this._retrieveFromMemory(queryText, owningSystem);
+    const retrieval = await this._retrieveFromMemory(queryText, owningSystem);
 
     let memoryHit = retrieval.hit;
     let memorySource = retrieval.source;

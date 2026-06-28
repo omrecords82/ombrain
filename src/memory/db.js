@@ -917,6 +917,20 @@ class MemoryDB {
     return rows.slice(0, limit);
   }
 
+  listTheology({ category, limit = 500 } = {}) {
+    if (this.backend === 'sqlite') {
+      let sql = 'SELECT * FROM theological_memory';
+      const params = [];
+      if (category) { sql += ' WHERE category = ?'; params.push(category); }
+      sql += ' ORDER BY category, reference_key LIMIT ?';
+      params.push(limit);
+      return this.sqlite.prepare(sql).all(...params);
+    }
+    let rows = this.json.theological_memory.slice();
+    if (category) rows = rows.filter((r) => r.category === category);
+    return rows.slice(0, limit);
+  }
+
   getTheologyByRef(reference_key) {
     if (this.backend === 'sqlite') return this.sqlite.prepare('SELECT * FROM theological_memory WHERE reference_key = ?').get(reference_key);
     return this.json.theological_memory.find((r) => r.reference_key === reference_key) || null;

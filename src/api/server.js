@@ -72,7 +72,7 @@ function getLiturgicalSeason(date, cal) {
 // ---------------------------------------------------------------------------
 
 function createServer(deps = {}) {
-  const { db, orchestrator, governance, churchFinder } = deps;
+  const { db, orchestrator, governance, churchFinder, ragRetriever } = deps;
   const app = express();
   app.use(express.json({ limit: '1mb' }));
 
@@ -603,7 +603,20 @@ function createServer(deps = {}) {
       return res.status(503).json({ ok: false, error: 'theology_disabled', hint: 'Set BRAIN_THEOLOGY_ENABLED=true' });
     }
     const topK = config.theology.topK || 8;
-    const chunks = db.searchTheology(b.question, { limit: topK });
+    let chunks = [];
+    try {
+      if (ragRetriever && db && typeof db.listTheology === 'function') {
+        const rows = db.listTheology({ limit: 500 });
+        const ranked = await ragRetriever.retrieve(b.question, rows, { k: topK, textField: 'body' });
+        chunks = ranked.map((r) => ({ ...r.meta, body: r.text, _rag_score: r.score }));
+      }
+      if (chunks.length === 0) {
+        chunks = db.searchTheology(b.question, { limit: topK });
+      }
+    } catch (e) {
+      logger.warn('theology_ask_rag_error', { name: e && e.name });
+      chunks = db.searchTheology(b.question, { limit: topK });
+    }
     const citations = chunks.map((c) => ({
       source_ref: c.source_ref || c.reference_key,
       source: c.source,

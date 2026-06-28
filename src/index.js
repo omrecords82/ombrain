@@ -11,6 +11,7 @@
 const { config } = require('./config');
 const { MemoryDB } = require('./memory/db');
 const { BrainAIClient } = require('./ai/client');
+const { createRagRetriever } = require('./memory/ragRetriever');
 const { Orchestrator } = require('./orchestrator/orchestrator');
 const { OmstudioClient } = require('./governance/omstudioClient');
 const { GovernanceManager } = require('./governance/governanceManager');
@@ -35,6 +36,12 @@ function main() {
   logger.info('memory_backend', { backend: db.backendName() });
 
   const aiClient = new BrainAIClient();
+  const ragRetriever = createRagRetriever({
+    aiClient,
+    liveEmbeddingsEnabled: config.learning.liveEmbeddingsEnabled,
+    dim: config.memory.embeddingDim,
+    logger,
+  });
 
   const omstudio = new OmstudioClient({
     baseUrl: config.omstudio.governanceBaseUrl,
@@ -46,7 +53,7 @@ function main() {
   const governance = new GovernanceManager({ db, omstudio });
   logger.info('omstudio_governance', { transport: config.omstudio.transport });
 
-  const orchestrator = new Orchestrator({ db, aiClient, governance });
+  const orchestrator = new Orchestrator({ db, aiClient, governance, ragRetriever });
 
   const btwQueue = new BtwQueue({ db });
   orchestrator.btwQueue = btwQueue;
@@ -75,7 +82,7 @@ function main() {
   const cron = new CronManager({ pipeline });
   cron.start();
 
-  const app = createServer({ db, orchestrator, governance, churchFinder });
+  const app = createServer({ db, orchestrator, governance, churchFinder, ragRetriever });
   const server = app.listen(config.http.port, config.http.host, () => {
     logger.info('http_listening', { host: config.http.host, port: config.http.port });
   });
