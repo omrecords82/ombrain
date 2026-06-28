@@ -21,7 +21,10 @@
  */
 
 const { classifyIntent } = require('../modes/index');
-const { getPascha, getMoveableFeasts, getFixedFeasts, getFastingRule } = require('../calendar/index');
+const { getPascha, getMoveableFeasts, getFixedFeasts, getFastingRule, saintsForDate, saintsForYear } = require('../calendar/index');
+
+const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december'];
 const { search: docSearch, getBySlug, parseReference, extractReferences } = require('../theology/index');
 const { ChurchFinder } = require('../churchFinder/index');
 
@@ -85,6 +88,47 @@ async function handleCalendar(query) {
       moveableFeasts: moveableEntries,
       fixedFeasts:    fixedEntries,
     };
+  }
+
+  // Saints commemorated on a date (e.g. "which saints on August 6", "saint of the day")
+  if (lower.includes('saint')) {
+    let month = null;
+    let day = null;
+    // "August 6" / "Aug 6" style
+    const mdMatch = lower.match(/\b([a-z]{3,9})\s+(\d{1,2})\b/);
+    if (mdMatch) {
+      const mi = MONTH_NAMES.findIndex((m) => m.startsWith(mdMatch[1]));
+      if (mi >= 0) { month = mi + 1; day = parseInt(mdMatch[2], 10); }
+    }
+    // numeric "8/6" or "8-6"
+    if (month == null) {
+      const numMatch = lower.match(/\b(\d{1,2})[\/-](\d{1,2})\b/);
+      if (numMatch) { month = parseInt(numMatch[1], 10); day = parseInt(numMatch[2], 10); }
+    }
+    if (month != null && day != null && typeof saintsForDate === 'function') {
+      const calendar = lower.includes('new style') || lower.includes('n.s.') ? 'new' : 'old';
+      const saints = saintsForDate(month, day, calendar, year);
+      return {
+        type: 'calendar.saints',
+        year,
+        calendar,
+        count: saints.length,
+        saints,
+        answer: saints.length
+          ? `On ${MONTH_NAMES[month - 1]} ${day} (${calendar === 'new' ? 'N.S.' : 'O.S.'}) the Church commemorates: ${saints.map((s) => s.name).join('; ')}.`
+          : `No saints are recorded in the Brain's calendar for ${MONTH_NAMES[month - 1]} ${day} (${calendar === 'new' ? 'N.S.' : 'O.S.'}). The seed set is representative, not exhaustive.`,
+      };
+    }
+    // No date given: summarise the year's commemorations.
+    if (typeof saintsForYear === 'function') {
+      const all = saintsForYear(year);
+      return {
+        type: 'calendar.saints.year',
+        year,
+        count: all.length,
+        answer: `The Brain's calendar records ${all.length} principal commemorations for ${year}. Ask about a specific date (e.g. "saints on November 13") for details.`,
+      };
+    }
   }
 
   // Generic calendar answer

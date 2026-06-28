@@ -1,6 +1,10 @@
 node_modules/
 .env
 data/
+# Seeded, source-controlled calendar reference data (saints menaion) is NOT
+# runtime data and must be tracked.
+!src/calendar/data/
+!src/calendar/data/**
 *.db
 *.db-journal
 *.db-wal
