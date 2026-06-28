@@ -98,5 +98,13 @@ if [[ -x "${APP_DIR}/deploy/post-deploy-snapshots.sh" ]]; then
     echo "[deploy] WARNING: post-deploy-snapshots failed (non-fatal)"
 fi
 
+echo "[deploy] installing/updating ombrain CLI + server registry"
+if [[ -x "${APP_DIR}/deploy/install-ombrain.sh" ]]; then
+  bash "${APP_DIR}/deploy/install-ombrain.sh" \
+    --register-master 127.0.0.1 \
+    --ports 8390 || \
+    echo "[deploy] WARNING: install-ombrain failed (non-fatal)"
+fi
+
 echo "[deploy] done. Follow deploy/VERIFY.md to confirm the definition-of-done."
 echo "[deploy] quick check: systemctl status om-brain.service --no-pager"
