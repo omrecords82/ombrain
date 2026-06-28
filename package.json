@@ -8,6 +8,9 @@
     "node": ">=20.0.0"
   },
   "main": "src/index.js",
+  "bin": {
+    "ombrain": "bin/ombrain.js"
+  },
   "scripts": {
     "start": "node src/index.js",
     "init-db": "node scripts/init-db.js",
