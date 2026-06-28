@@ -431,3 +431,28 @@ CREATE INDEX IF NOT EXISTS idx_btw_delivered ON btw_queue(delivered);
 CREATE INDEX IF NOT EXISTS idx_btw_deliver_at ON btw_queue(deliver_at);
 CREATE INDEX IF NOT EXISTS idx_btw_session ON btw_queue(session_id);
 CREATE INDEX IF NOT EXISTS idx_btw_answered ON btw_queue(answered);
+
+-- -----------------------------------------------------------------------------
+-- 16. skill_memory — memorized executable scripts (bash, python, node).
+--     Dry-run by default at the API layer; unsafe patterns blocked before store/run.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS skill_memory (
+  id              TEXT PRIMARY KEY,           -- UUID
+  skill_key       TEXT NOT NULL UNIQUE,       -- stable slug e.g. "check-disk-usage"
+  title           TEXT NOT NULL,
+  description     TEXT,
+  language        TEXT NOT NULL,              -- bash | python | node
+  script_body     TEXT NOT NULL,              -- script source (never store secrets)
+  tags_json       TEXT,                       -- JSON array
+  source          TEXT NOT NULL DEFAULT 'operator', -- operator | learned | import
+  version         INTEGER NOT NULL DEFAULT 1,
+  active          INTEGER NOT NULL DEFAULT 1, -- 0=soft-deleted
+  last_run_at     TEXT,
+  run_count       INTEGER NOT NULL DEFAULT 0,
+  last_exit_code  INTEGER,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_skill_key ON skill_memory(skill_key);
+CREATE INDEX IF NOT EXISTS idx_skill_active ON skill_memory(active);
+CREATE INDEX IF NOT EXISTS idx_skill_language ON skill_memory(language);

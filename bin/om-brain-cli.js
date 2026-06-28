@@ -33,6 +33,10 @@
  *   knowledge show <slug>                     Show full knowledge document
  *   tasks list [--status open|snoozed|done]   List tasks
  *   tasks show <id>                           Show a task
+ *   skills list                               List active skills
+ *   skills show <key>                         Show skill detail
+ *   skills add --file <path> [--key <key>]    Add/update skill from script file
+ *   skills run <key> [--dry-run] [--commit]   Run skill (dry-run default)
  *   help                                      Show this help
  */
 
@@ -121,6 +125,13 @@ function printHelp() {
 \x1b[33mTask Memory:\x1b[0m
   tasks list [--status <status>]      List tasks (open|snoozed|done, default: open)
   tasks show <id>                     Full task detail
+
+\x1b[33mSkill Memory:\x1b[0m
+  skills list                         List active memorized scripts
+  skills show <key>                   Full skill detail + script body
+  skills add --file <path> [--key K]  Add/update from .sh/.py/.js file
+  skills run <key> [--dry-run]        Preview run (default)
+  skills run <key> --commit           Execute for real
 
   help                                Show this help
 `);
@@ -555,6 +566,98 @@ async function cmdTasks(args) {
 }
 
 // ---------------------------------------------------------------------------
+// Skill memory commands
+// ---------------------------------------------------------------------------
+
+function inferLanguageFromPath(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.sh' || ext === '.bash') return 'bash';
+  if (ext === '.py') return 'python';
+  if (ext === '.js' || ext === '.mjs') return 'node';
+  return null;
+}
+
+async function cmdSkills(args) {
+  const fs = require('fs');
+  const { normalizeSkillKey, isValidSkillKey } = require(path.join(root, 'src/skills/skillSafety'));
+  const { executeSkill } = require(path.join(root, 'src/skills/skillRunner'));
+  const db = loadDB();
+  const flags = {};
+  const positional = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--file' && args[i + 1]) { flags.file = args[++i]; }
+    else if (args[i] === '--key' && args[i + 1]) { flags.key = args[++i]; }
+    else if (args[i] === '--language' && args[i + 1]) { flags.language = args[++i]; }
+    else if (args[i] === '--title' && args[i + 1]) { flags.title = args[++i]; }
+    else if (args[i] === '--dry-run') { flags.dryRun = true; }
+    else if (args[i] === '--commit') { flags.commit = true; }
+    else positional.push(args[i]);
+  }
+  const [sub, ...rest] = positional;
+
+  if (sub === 'list') {
+    const rows = db.listSkills({ active: true, limit: 200 });
+    if (rows.length === 0) { console.log('No active skills.'); db.close(); return; }
+    console.log(`\n\x1b[1mSkills (${rows.length})\x1b[0m\n`);
+    for (const s of rows) {
+      console.log(`  \x1b[36m${s.skill_key.padEnd(35)}\x1b[0m [${s.language}] v${s.version || 1} runs=${s.run_count || 0}`);
+      console.log(`    ${s.title}`);
+    }
+    console.log('');
+  } else if (sub === 'show') {
+    const key = rest[0];
+    if (!key) printError('Usage: skills show <key>');
+    const s = db.getSkillByKey(key);
+    if (!s || s.active === 0) printError(`Skill not found: ${key}`);
+    printJSON(s);
+  } else if (sub === 'add') {
+    if (!flags.file) printError('Usage: skills add --file <path> [--key <key>] [--language bash|python|node]');
+    const { validateSkillScript } = require(path.join(root, 'src/skills/skillSafety'));
+    const script_body = fs.readFileSync(flags.file, 'utf8');
+    const language = flags.language || inferLanguageFromPath(flags.file);
+    if (!language) printError('Could not infer language — pass --language bash|python|node');
+    const validation = validateSkillScript({ script_body, language });
+    if (!validation.ok) printError('Unsafe script rejected: ' + validation.errors.join(', '));
+    if (validation.warnings.length) {
+      console.warn('Warning:', validation.warnings.join(', '));
+    }
+    const skill_key = normalizeSkillKey(flags.key || path.basename(flags.file, path.extname(flags.file)));
+    if (!isValidSkillKey(skill_key)) printError(`Invalid skill key: ${skill_key}`);
+    const crypto = require('crypto');
+    const existing = db.getSkillByKey(skill_key);
+    const id = (existing && existing.id) || crypto.randomUUID();
+    db.upsertSkill({
+      id,
+      skill_key,
+      title: flags.title || skill_key.replace(/-/g, ' '),
+      description: null,
+      language,
+      script_body,
+      tags_json: null,
+      source: 'operator',
+      version: existing ? (existing.version || 1) + 1 : 1,
+      active: 1,
+    });
+    console.log(`\x1b[32m✓ Skill saved:\x1b[0m ${skill_key} (${language})`);
+  } else if (sub === 'run') {
+    const key = rest[0];
+    if (!key) printError('Usage: skills run <key> [--dry-run|--commit]');
+    const s = db.getSkillByKey(key);
+    if (!s || s.active === 0) printError(`Skill not found: ${key}`);
+    const execute = flags.commit && !flags.dryRun;
+    const result = await executeSkill(s, { execute, commit: execute, noLive: process.env.OMBRAIN_SKILLS_NO_LIVE === '1' });
+    if (result.executed && result.exit_code != null) {
+      db.recordSkillRun(key, { exit_code: result.exit_code });
+    }
+    printJSON(result);
+  } else {
+    printError(`Unknown skills subcommand: ${sub}. Use: list, show, add, run`);
+  }
+
+  db.close();
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -578,6 +681,7 @@ async function main() {
     else if (cmd === 'procedures') await cmdProcedures(args);
     else if (cmd === 'knowledge')  await cmdKnowledge(args);
     else if (cmd === 'tasks')      await cmdTasks(args);
+    else if (cmd === 'skills')     await cmdSkills(args);
     else { printHelp(); printError(`Unknown command: ${cmd}`); }
   } catch (err) {
     printError(err.message);

@@ -348,6 +348,143 @@ function createServer(deps = {}) {
   });
 
   // -------------------------------------------------------------------------
+  // Phase 2 — Skill memory (executable scripts: bash, python, node)
+  // -------------------------------------------------------------------------
+
+  const {
+    normalizeSkillKey,
+    isValidSkillKey,
+    validateSkillScript,
+    VALID_LANGUAGES,
+  } = require('../skills/skillSafety');
+  const { executeSkill } = require('../skills/skillRunner');
+
+  app.get('/brain/skills', (req, res) => {
+    if (!db || typeof db.listSkills !== 'function') {
+      return res.status(503).json({ ok: false, error: 'no_db' });
+    }
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const includeInactive = req.query.all === 'true';
+    const rows = db.listSkills({
+      active: includeInactive ? null : true,
+      language: req.query.language,
+      limit,
+    });
+    return res.json({ count: rows.length, skills: rows.map((r) => redactForLog(r)) });
+  });
+
+  app.get('/brain/skills/:key', (req, res) => {
+    if (!db || typeof db.getSkillByKey !== 'function') {
+      return res.status(503).json({ ok: false, error: 'no_db' });
+    }
+    const row = db.getSkillByKey(req.params.key);
+    if (!row || row.active === 0) {
+      return res.status(404).json({ ok: false, error: 'skill_not_found' });
+    }
+    return res.json({ skill: redactForLog(row) });
+  });
+
+  app.post('/brain/skills', (req, res) => {
+    if (!db || typeof db.upsertSkill !== 'function') {
+      return res.status(503).json({ ok: false, error: 'no_db' });
+    }
+    const b = req.body || {};
+    const rawKey = b.key || b.skill_key;
+    const skill_key = normalizeSkillKey(rawKey);
+    const language = String(b.language || '').toLowerCase();
+    const script_body = b.script || b.script_body;
+
+    if (!skill_key || !isValidSkillKey(skill_key)) {
+      return res.status(400).json({ ok: false, error: 'invalid_skill_key' });
+    }
+    if (!VALID_LANGUAGES.has(language)) {
+      return res.status(400).json({ ok: false, error: 'invalid_language', allowed: [...VALID_LANGUAGES] });
+    }
+    if (!script_body) {
+      return res.status(400).json({ ok: false, error: 'script_required' });
+    }
+
+    const validation = validateSkillScript({ script_body, language });
+    if (!validation.ok) {
+      return res.status(400).json({ ok: false, error: 'unsafe_script', details: validation.errors });
+    }
+
+    const existing = db.getSkillByKey(skill_key);
+    const id = (existing && existing.id) || b.id || require('crypto').randomUUID();
+    const version = existing ? (existing.version || 1) + 1 : 1;
+    const title = b.title || skill_key.replace(/-/g, ' ');
+    const tags_json = b.tags ? JSON.stringify(b.tags) : null;
+
+    db.upsertSkill({
+      id,
+      skill_key,
+      title,
+      description: b.description || null,
+      language,
+      script_body,
+      tags_json,
+      source: b.source || (existing ? existing.source : 'operator'),
+      version,
+      active: 1,
+    });
+
+    return res.status(existing ? 200 : 201).json({
+      ok: true,
+      id,
+      skill_key,
+      version,
+      warnings: validation.warnings.length ? validation.warnings : undefined,
+    });
+  });
+
+  app.post('/brain/skills/:key/run', async (req, res) => {
+    if (!db || typeof db.getSkillByKey !== 'function') {
+      return res.status(503).json({ ok: false, error: 'no_db' });
+    }
+    const skill = db.getSkillByKey(req.params.key);
+    if (!skill || skill.active === 0) {
+      return res.status(404).json({ ok: false, error: 'skill_not_found' });
+    }
+
+    const b = req.body || {};
+    const execute = !!(
+      b.execute || b.commit ||
+      req.query.commit === '1' || req.query.commit === 'true'
+    );
+
+    try {
+      const result = await executeSkill(skill, {
+        execute,
+        commit: execute,
+        args: b.args,
+        env: b.env,
+        noLive: b.no_live || b['no-live'],
+      });
+
+      if (result.executed && result.exit_code != null && typeof db.recordSkillRun === 'function') {
+        db.recordSkillRun(skill.skill_key, { exit_code: result.exit_code });
+      }
+
+      if (!result.ok && result.errors) {
+        return res.status(400).json(result);
+      }
+      return res.json(redactForLog(result));
+    } catch (e) {
+      logger.error('skill_run_error', { skill_key: req.params.key, name: e && e.name });
+      return res.status(500).json({ ok: false, error: 'skill_run_failed' });
+    }
+  });
+
+  app.delete('/brain/skills/:key', (req, res) => {
+    if (!db || typeof db.deactivateSkill !== 'function') {
+      return res.status(503).json({ ok: false, error: 'no_db' });
+    }
+    const ok = db.deactivateSkill(req.params.key);
+    if (!ok) return res.status(404).json({ ok: false, error: 'skill_not_found' });
+    return res.json({ ok: true, skill_key: req.params.key, active: false });
+  });
+
+  // -------------------------------------------------------------------------
   // Phase 2 — Correction memory
   // -------------------------------------------------------------------------
 
@@ -978,6 +1115,7 @@ function createServer(deps = {}) {
         forceMode: b.force_mode || b.mode,
         btw: b.btw || false,
         useModel: b.use_model || false,
+        skill: b.skill,
       });
       return res.json({
         ok: true,

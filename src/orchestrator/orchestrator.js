@@ -176,12 +176,111 @@ class Orchestrator {
     return results;
   }
 
+  _tryIngestSkillFromQuery(query, opts = {}) {
+    if (!this.db || typeof this.db.upsertSkill !== 'function') return null;
+
+    const {
+      normalizeSkillKey,
+      isValidSkillKey,
+      validateSkillScript,
+      VALID_LANGUAGES,
+    } = require('../skills/skillSafety');
+
+    let payload = opts.skill || null;
+    const q = String(query || '').trim();
+
+    if (!payload && /^learn\s+(?:this\s+)?skill\b/i.test(q)) {
+      const metaMatch = q.match(/\bkey=([a-zA-Z0-9_-]+)/i);
+      const langMatch = q.match(/\blanguage=(bash|python|node)\b/i);
+      const scriptMatch = q.match(/```(?:bash|python|javascript|js|node)?\s*([\s\S]*?)```/);
+      if (metaMatch && langMatch && scriptMatch) {
+        payload = {
+          key: metaMatch[1],
+          language: langMatch[1],
+          script: scriptMatch[1].trim(),
+          description: q.replace(/```[\s\S]*?```/, '').trim(),
+        };
+      }
+    }
+
+    if (!payload || !payload.key || !payload.language || !(payload.script || payload.script_body)) {
+      return null;
+    }
+
+    const skill_key = normalizeSkillKey(payload.key);
+    const language = String(payload.language).toLowerCase();
+    const script_body = payload.script || payload.script_body;
+
+    if (!isValidSkillKey(skill_key) || !VALID_LANGUAGES.has(language)) {
+      return {
+        mode: 'technical',
+        answer: 'Skill ingestion failed: invalid key or language (bash|python|node).',
+        detail: { skill_ingest: false, error: 'invalid_key_or_language' },
+      };
+    }
+
+    const validation = validateSkillScript({ script_body, language });
+    if (!validation.ok) {
+      return {
+        mode: 'technical',
+        answer: 'Skill ingestion blocked by safety checks: ' + validation.errors.join(', '),
+        detail: { skill_ingest: false, errors: validation.errors },
+      };
+    }
+
+    const existing = this.db.getSkillByKey(skill_key);
+    const id = (existing && existing.id) || crypto.randomUUID();
+    this.db.upsertSkill({
+      id,
+      skill_key,
+      title: payload.title || skill_key.replace(/-/g, ' '),
+      description: payload.description || null,
+      language,
+      script_body,
+      tags_json: payload.tags ? JSON.stringify(payload.tags) : null,
+      source: 'learned',
+      version: existing ? (existing.version || 1) + 1 : 1,
+      active: 1,
+    });
+
+    return {
+      mode: 'technical',
+      answer: `Skill "${skill_key}" memorized (${language}). Run via POST /brain/skills/${skill_key}/run (dry-run default).`,
+      detail: {
+        skill_ingest: true,
+        skill_key,
+        language,
+        version: existing ? (existing.version || 1) + 1 : 1,
+        warnings: validation.warnings.length ? validation.warnings : undefined,
+      },
+    };
+  }
+
   async _retrieveFromMemory(queryText, owningSystem) {
     if (!this.db || !config.learning.enabled) {
       return { hit: false, source: 'learning_disabled', content: null, procedure: null };
     }
 
     const q = String(queryText || '').toLowerCase();
+
+    try {
+      if (typeof this.db.searchSkills === 'function') {
+        const skills = this.db.searchSkills(q, { limit: 3 });
+        if (skills.length > 0) {
+          const best = skills[0];
+          logger.info('retrieval_hit_skill', { skill_key: best.skill_key });
+          return {
+            hit: true,
+            source: 'skill_memory',
+            content: skills,
+            procedure: null,
+            skill: best,
+          };
+        }
+      }
+    } catch (e) {
+      logger.warn('retrieval_skill_error', { name: e && e.name });
+    }
 
     try {
       const procs = this.db.listProcedures({ approved: true, limit: 20 });
@@ -330,6 +429,11 @@ class Orchestrator {
 
     if (!q) {
       return { mode: 'general', answer: 'Please provide a question.', detail: {} };
+    }
+
+    const skillIngest = this._tryIngestSkillFromQuery(q, opts);
+    if (skillIngest) {
+      return { session_id: sessionId, ...skillIngest };
     }
 
     if (opts.btw && this.btwQueue) {

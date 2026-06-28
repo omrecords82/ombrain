@@ -107,7 +107,8 @@ class MemoryDB {
       theological_memory: [],
       church_memory: [],
       btw_queue: [],
-      _seq: { doctrine: 0, systruth: 0, event: 0, work: 0, decision: 0, approval: 0, apphist: 0, omaudit: 0, task: 0, knowledge: 0, procedure: 0, correction: 0, theology: 0, church: 0, btw: 0 },
+      skill_memory: [],
+      _seq: { doctrine: 0, systruth: 0, event: 0, work: 0, decision: 0, approval: 0, apphist: 0, omaudit: 0, task: 0, knowledge: 0, procedure: 0, correction: 0, theology: 0, church: 0, btw: 0, skill: 0 },
     };
     if (fs.existsSync(this.dbPath + '.json')) {
       try {
@@ -1366,6 +1367,128 @@ class MemoryDB {
       ).all(session_id);
     }
     return this.json.btw_queue.filter((r) => r.session_id === session_id);
+  }
+
+  // -------------------------------------------------------------------------
+  // Skill memory — memorized executable scripts (bash, python, node)
+  // -------------------------------------------------------------------------
+  upsertSkill({
+    id, skill_key, title, description, language, script_body,
+    tags_json, source, version, active,
+  }) {
+    const now = new Date().toISOString();
+    const ver = version != null ? version : 1;
+    const act = active != null ? (active ? 1 : 0) : 1;
+    if (this.backend === 'sqlite') {
+      this.sqlite
+        .prepare(
+          `INSERT INTO skill_memory (id, skill_key, title, description, language, script_body,
+             tags_json, source, version, active, run_count, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now'), datetime('now'))
+           ON CONFLICT(skill_key) DO UPDATE SET
+             title=excluded.title, description=excluded.description, language=excluded.language,
+             script_body=excluded.script_body, tags_json=excluded.tags_json, source=excluded.source,
+             version=excluded.version, active=excluded.active, updated_at=datetime('now')`,
+        )
+        .run(
+          id, skill_key, title, description || null, language, script_body,
+          tags_json || null, source || 'operator', ver, act,
+        );
+      return id;
+    }
+    const existing = this.json.skill_memory.find((r) => r.skill_key === skill_key);
+    if (existing) {
+      Object.assign(existing, {
+        title, description: description || null, language, script_body,
+        tags_json: tags_json || null, source: source || existing.source || 'operator',
+        version: ver, active: act, updated_at: now,
+      });
+    } else {
+      this.json.skill_memory.push({
+        id, skill_key, title, description: description || null, language, script_body,
+        tags_json: tags_json || null, source: source || 'operator', version: ver, active: act,
+        last_run_at: null, run_count: 0, last_exit_code: null, created_at: now, updated_at: now,
+      });
+    }
+    this._persistJson();
+    return id;
+  }
+
+  getSkillByKey(skill_key) {
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare('SELECT * FROM skill_memory WHERE skill_key = ?').get(skill_key);
+    }
+    return this.json.skill_memory.find((r) => r.skill_key === skill_key) || null;
+  }
+
+  listSkills({ active = true, language, limit = 100 } = {}) {
+    if (this.backend === 'sqlite') {
+      let sql = 'SELECT * FROM skill_memory';
+      const params = [];
+      const where = [];
+      if (active != null) { where.push('active = ?'); params.push(active ? 1 : 0); }
+      if (language) { where.push('language = ?'); params.push(language); }
+      if (where.length) sql += ' WHERE ' + where.join(' AND ');
+      sql += ' ORDER BY updated_at DESC LIMIT ?';
+      params.push(limit);
+      return this.sqlite.prepare(sql).all(...params);
+    }
+    let rows = this.json.skill_memory.slice();
+    if (active != null) rows = rows.filter((r) => !!r.active === !!active);
+    if (language) rows = rows.filter((r) => r.language === language);
+    return rows.slice(-limit).reverse();
+  }
+
+  searchSkills(query, { limit = 10 } = {}) {
+    const q = String(query || '').toLowerCase();
+    const rows = this.listSkills({ active: true, limit: 500 });
+    return rows.filter((r) => {
+      let tags = [];
+      try { tags = r.tags_json ? JSON.parse(r.tags_json) : []; } catch (_) { tags = []; }
+      return (
+        (r.skill_key || '').toLowerCase().includes(q) ||
+        (r.title || '').toLowerCase().includes(q) ||
+        (r.description || '').toLowerCase().includes(q) ||
+        tags.some((t) => String(t).toLowerCase().includes(q))
+      );
+    }).slice(0, limit);
+  }
+
+  deactivateSkill(skill_key) {
+    const now = new Date().toISOString();
+    if (this.backend === 'sqlite') {
+      const info = this.sqlite
+        .prepare(`UPDATE skill_memory SET active=0, updated_at=datetime('now') WHERE skill_key=?`)
+        .run(skill_key);
+      return info.changes > 0;
+    }
+    const row = this.json.skill_memory.find((r) => r.skill_key === skill_key);
+    if (!row) return false;
+    row.active = 0;
+    row.updated_at = now;
+    this._persistJson();
+    return true;
+  }
+
+  recordSkillRun(skill_key, { exit_code, last_run_at }) {
+    const ts = last_run_at || new Date().toISOString();
+    if (this.backend === 'sqlite') {
+      this.sqlite
+        .prepare(
+          `UPDATE skill_memory SET run_count=run_count+1, last_run_at=?, last_exit_code=?,
+           updated_at=datetime('now') WHERE skill_key=?`,
+        )
+        .run(ts, exit_code != null ? exit_code : null, skill_key);
+      return;
+    }
+    const row = this.json.skill_memory.find((r) => r.skill_key === skill_key);
+    if (row) {
+      row.run_count = (row.run_count || 0) + 1;
+      row.last_run_at = ts;
+      row.last_exit_code = exit_code != null ? exit_code : null;
+      row.updated_at = ts;
+      this._persistJson();
+    }
   }
 
   close() {
