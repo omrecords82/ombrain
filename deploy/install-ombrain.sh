@@ -22,12 +22,18 @@
 #      -> installs a copy of ombrain.js next to the launcher
 #
 # Options:
-#   --prefix <dir>     Install dir for the launcher (default: /usr/local/bin)
-#   --standalone <f>   Install a copy of the given ombrain.js (remote hosts)
-#   --node <path>      Explicit path to the node binary (skip auto-detect)
-#   --url <url>        Bake a default OMBRAIN_URL into /etc/om-brain/ombrain.conf
-#   --uninstall        Remove the installed command
-#   -h, --help         Show help
+#   --prefix <dir>          Install dir for the launcher (default: /usr/local/bin)
+#   --standalone <f>        Install a copy of the given ombrain.js (remote hosts)
+#   --node <path>           Explicit path to the node binary (skip auto-detect)
+#   --url <url>             Bake a default OMBRAIN_URL into /etc/om-brain/ombrain.conf
+#   --register-master <h>   Seed the server registry with master host <h>
+#   --register-backup <h>   Seed/append a backup host <h> (repeatable)
+#   --ports <spec>          Port pool for the seeded host(s) (default 60000-62000)
+#   --uninstall             Remove the installed command
+#   -h, --help              Show help
+#
+# The registry is written to /etc/om-brain/ombrain.servers.json. ombrain reads
+# master -> backups and load-balances each request across the host's port pool.
 #
 set -euo pipefail
 
@@ -35,6 +41,9 @@ PREFIX="/usr/local/bin"
 STANDALONE=""
 NODE_BIN=""
 DEFAULT_URL=""
+REGISTER_MASTER=""
+REGISTER_BACKUPS=()
+PORTS_SPEC="60000-62000"
 UNINSTALL=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,9 +55,12 @@ while [[ $# -gt 0 ]]; do
     --standalone) STANDALONE="$2"; shift 2 ;;
     --node) NODE_BIN="$2"; shift 2 ;;
     --url) DEFAULT_URL="$2"; shift 2 ;;
+    --register-master) REGISTER_MASTER="$2"; shift 2 ;;
+    --register-backup) REGISTER_BACKUPS+=("$2"); shift 2 ;;
+    --ports) PORTS_SPEC="$2"; shift 2 ;;
     --uninstall) UNINSTALL=1; shift ;;
     -h|--help)
-      sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,48p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
@@ -136,6 +148,29 @@ if [[ -n "$DEFAULT_URL" ]]; then
   mkdir -p /etc/om-brain
   echo "OMBRAIN_URL=$DEFAULT_URL" > /etc/om-brain/ombrain.conf
   echo "wrote default URL -> /etc/om-brain/ombrain.conf"
+fi
+
+# --- Optional: seed the server registry (master / backups + port pool) -----
+if [[ -n "$REGISTER_MASTER" ]]; then
+  mkdir -p /etc/om-brain
+  REG=/etc/om-brain/ombrain.servers.json
+  {
+    echo '{'
+    echo '  "version": 1,'
+    echo '  "rr": 0,'
+    echo '  "servers": ['
+    printf '    { "name": "master", "scheme": "http", "host": "%s", "ports": "%s", "role": "master", "priority": 0 }' "$REGISTER_MASTER" "$PORTS_SPEC"
+    i=1
+    for b in "${REGISTER_BACKUPS[@]:-}"; do
+      [[ -z "$b" ]] && continue
+      printf ',\n    { "name": "backup%d", "scheme": "http", "host": "%s", "ports": "%s", "role": "backup", "priority": %d }' "$i" "$b" "$PORTS_SPEC" "$((i*10))"
+      i=$((i+1))
+    done
+    echo ''
+    echo '  ]'
+    echo '}'
+  } > "$REG"
+  echo "wrote server registry -> $REG (master=$REGISTER_MASTER, ports=$PORTS_SPEC, backups=${#REGISTER_BACKUPS[@]})"
 fi
 
 # --- Verify ----------------------------------------------------------------
