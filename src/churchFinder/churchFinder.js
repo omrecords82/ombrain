@@ -296,13 +296,20 @@ class ChurchFinder {
 
     const { error, results: rawResults } = await this._fetchNearby(lat, lng, radiusMiles);
     if (error) {
+      // The cache was already checked above and was empty. Live lookup failed
+      // (proxy down / GOOGLE_PLACES_API_KEY absent / circuit-breaker block), so
+      // degrade gracefully: signal `degraded` + `mode: 'cache_only'` so callers
+      // present a clear "live search unavailable" state rather than a hard error.
+      // See docs/om-brain/adr/0002-church-finder-places-key.md.
       return {
         error,
+        degraded: true,
+        mode: 'cache_only',
         query: input,
         geocoded_address: formatted_address,
         churches: [],
         total: 0,
-        note: `Church finder proxy error: ${error}. Verify OMAI server and GOOGLE_PLACES_API_KEY.`,
+        note: `Live church lookup is currently unavailable (${error}). No cached Orthodox churches near "${input}" yet. Live lookup requires the OMAI Places proxy and GOOGLE_PLACES_API_KEY; cached results from church_memory are served automatically when present.`,
       };
     }
 
