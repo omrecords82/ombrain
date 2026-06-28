@@ -93,4 +93,68 @@ function addDays(date, days) {
   return d;
 }
 
-module.exports = { getFastingRule };
+const iso = (d) => d.toISOString().slice(0, 10);
+
+/**
+ * fastingCalendar — the major fasting periods of a civil year as date ranges.
+ * Aggregates the four canonical fasts plus the moveable Great Lent / Holy Week,
+ * each with start/end ISO dates and a level. Deterministic; built from the same
+ * Paschalion + Julian-offset math as getFastingRule().
+ */
+function fastingCalendar(year) {
+  const pascha = getPascha(year);
+  const m = getMoveableFeasts(year);
+  const delta = gregorianDelta(year);
+  const allSaints = m.allSaints;
+
+  const periods = [
+    {
+      key: 'great_lent',
+      name: 'Great Lent and Holy Week',
+      level: 'strict_fast',
+      start: iso(m.cleanMonday),
+      end: iso(addDays(pascha, -1)),
+      moveable: true,
+    },
+    {
+      key: 'apostles_fast',
+      name: "Apostles' Fast",
+      level: 'strict_fast',
+      start: iso(addDays(allSaints, 1)),
+      end: iso(new Date(Date.UTC(year, 5, 28 + delta))),
+      moveable: true,
+      note: 'Variable length; begins the Monday after All Saints and ends the eve of Sts. Peter and Paul (June 29 O.S.).',
+    },
+    {
+      key: 'dormition_fast',
+      name: 'Dormition Fast',
+      level: 'strict_fast',
+      start: iso(new Date(Date.UTC(year, 7, 1 + delta))),
+      end: iso(new Date(Date.UTC(year, 7, 14 + delta))),
+      moveable: false,
+    },
+    {
+      key: 'nativity_fast',
+      name: 'Nativity Fast (Advent)',
+      level: 'strict_fast',
+      start: iso(new Date(Date.UTC(year, 10, 15 + delta))),
+      end: iso(new Date(Date.UTC(year, 11, 24 + delta))),
+      moveable: false,
+    },
+  ];
+
+  const singleDays = [
+    { key: 'theophany_eve', name: 'Eve of Theophany', date: iso(new Date(Date.UTC(year, 0, 5 + delta))) },
+    { key: 'beheading_forerunner', name: 'Beheading of St. John the Forerunner', date: iso(new Date(Date.UTC(year, 7, 29 + delta))) },
+    { key: 'exaltation_cross', name: 'Exaltation of the Holy Cross', date: iso(new Date(Date.UTC(year, 8, 14 + delta))) },
+  ];
+
+  return {
+    year,
+    periods,
+    strict_single_days: singleDays,
+    weekly_rule: 'Wednesdays and Fridays are fast days outside fast-free weeks.',
+  };
+}
+
+module.exports = { getFastingRule, fastingCalendar };

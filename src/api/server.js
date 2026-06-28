@@ -9,6 +9,8 @@
  *       GET  /brain/calendar/feasts/:year
  *       GET  /brain/calendar/fasting        ?date=YYYY-MM-DD (defaults to today)
  *       GET  /brain/calendar/season         ?date=YYYY-MM-DD (defaults to today)
+ *       GET  /brain/calendar/year/:year     full Paschalion + feasts + fasting
+ *       GET  /brain/calendar/range          ?start=&end= per-day fasting + saints
  *   - Added POST /brain/ask (P0-3):
  *       Unified query entry-point that routes through orchestrator.ask().
  *       Replaces the cron-only query-poll path with a synchronous HTTP surface.
@@ -793,6 +795,63 @@ function createServer(deps = {}) {
       date: date.toISOString().slice(0, 10),
       season,
     });
+  });
+
+  /**
+   * GET /brain/calendar/year/:year
+   * Full Paschalion record (Orthodox + Western Easter + cycles) plus moveable
+   * feasts, fixed feasts, and the year's fasting periods. Deterministic.
+   */
+  app.get('/brain/calendar/year/:year', (req, res) => {
+    const cal = loadCalendar();
+    if (!cal || typeof cal.calendarForYear !== 'function') {
+      return res.status(503).json({ ok: false, error: 'calendar_module_unavailable' });
+    }
+    const year = parseInt(req.params.year, 10);
+    if (isNaN(year) || year < 1900 || year > 2200) {
+      return res.status(400).json({ ok: false, error: 'year_out_of_range', hint: '1900–2200' });
+    }
+    const out = cal.calendarForYear(year, req.query.calendar || 'new');
+    if (typeof cal.fastingCalendar === 'function') {
+      out.fasting = cal.fastingCalendar(year);
+    }
+    return res.json({ ok: true, ...out });
+  });
+
+  /**
+   * GET /brain/calendar/range?start=YYYY-MM-DD&end=YYYY-MM-DD
+   * Per-day fasting rule (+ saints if the saints engine is present) across an
+   * inclusive date range, capped at 366 days.
+   */
+  app.get('/brain/calendar/range', (req, res) => {
+    const cal = loadCalendar();
+    if (!cal) return res.status(503).json({ ok: false, error: 'calendar_module_unavailable' });
+    const start = new Date(String(req.query.start) + 'T12:00:00Z');
+    const end = new Date(String(req.query.end) + 'T12:00:00Z');
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ ok: false, error: 'invalid_range', hint: 'start & end as YYYY-MM-DD' });
+    }
+    if (end.getTime() < start.getTime()) {
+      return res.status(400).json({ ok: false, error: 'end_before_start' });
+    }
+    const days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+    if (days > 366) {
+      return res.status(400).json({ ok: false, error: 'range_too_large', hint: 'max 366 days' });
+    }
+    const out = [];
+    for (let i = 0; i < days; i += 1) {
+      const d = new Date(start.getTime() + i * 86400000);
+      const fasting = typeof cal.getFastingRule === 'function' ? cal.getFastingRule(d) : null;
+      const saints = typeof cal.saintsForDate === 'function'
+        ? cal.saintsForDate(d.getUTCMonth() + 1, d.getUTCDate(), 'new', d.getUTCFullYear())
+        : [];
+      out.push({
+        date: d.toISOString().slice(0, 10),
+        fasting,
+        saints: saints.map((s) => ({ name: s.name, feast_type: s.feast_type, rank: s.rank })),
+      });
+    }
+    return res.json({ ok: true, start: out[0].date, end: out[out.length - 1].date, count: out.length, days: out });
   });
 
   // -------------------------------------------------------------------------

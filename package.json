@@ -13,6 +13,7 @@
     "init-db": "node scripts/init-db.js",
     "dump-schema": "node scripts/dump-schema.js",
     "collect-hosts": "node scripts/collect-hosts.js",
+    "validate-paschalion": "node scripts/validate-paschalion.js",
     "test": "node --test test/*.test.js",
     "lint": "node -e \"console.log('lint placeholder — no linter bundled')\""
   },

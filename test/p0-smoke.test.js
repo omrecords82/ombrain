@@ -17,10 +17,14 @@ test('P0 smoke — getPascha returns a Date for 2026', () => {
   assert.strictEqual(p.getUTCFullYear(), 2026);
 });
 
-test('P0 smoke — getPascha 2026 is 2026-04-19', () => {
+test('P0 smoke — getPascha 2026 is 2026-04-12', () => {
+  // Orthodox Pascha 2026 (Gregorian civil) is April 12 per published tables
+  // (Wikipedia "List of dates for Easter", GOARCH). A prior +7-day bug in
+  // julianToGregorian() yielded April 19; both that code and this expectation
+  // were corrected together (see scripts/validate-paschalion.js).
   const { getPascha } = require('../src/calendar/index');
   const p = getPascha(2026);
-  assert.strictEqual(p.toISOString().slice(0, 10), '2026-04-19');
+  assert.strictEqual(p.toISOString().slice(0, 10), '2026-04-12');
 });
 
 test('P0 smoke — getMoveableFeasts returns an object', () => {
