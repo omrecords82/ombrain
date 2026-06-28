@@ -20,13 +20,13 @@ deployed by the user's team on the confirmed inference host **auth01
 This build proceeds because **both governance gates are CLOSED**:
 
 1. **Environment-boundary ambiguity resolved.** The earlier `om-dev` / `.254`
-   environment-boundary ambiguity has been resolved. auth01 (192.168.1.254) is
-   the **confirmed Phase 1 primary inference host**.
+   environment-boundary ambiguity has been resolved. **om-dev (192.168.1.254)** is
+   the **confirmed Phase 1 primary inference host** (Brain + Ollama). Keycloak SSO
+   runs on **auth1 / keycloak (.253)**, not on `.254`. DNS name **auth01** is
+   FreeIPA at **.252**, not the Brain host.
 2. **Superadmin co-location approval GRANTED.** A human superadmin has
-   **approved co-locating Brain inference on auth01** alongside Keycloak SSO and
-   its PostgreSQL, on the condition that inference is confined by a hard
-   `MemoryMax` / `CPUQuota` isolation slice so it can never starve the SSO/DB
-   workloads.
+   **approved running Brain inference on om-dev (.254)** on the condition that
+   inference is confined by a hard `MemoryMax` / `CPUQuota` isolation slice.
 
 Because co-locating inference on auth01 is a **boundary-defining act** (a
 human-only domain under the doctrine), it is recorded here as the **governing

@@ -20,9 +20,9 @@ module.exports = [
   { domain: 'architecture', fact_key: 'host.omstudio', source_ref: '02-brain-architecture-server-map.md',
     body: 'omstudio-primary 192.168.1.242: OMStudio V2 planning/governance + local MariaDB omstudio_db. Brain memory/governance transplant target (Phase 2).' },
   { domain: 'architecture', fact_key: 'host.om-dev', source_ref: '02-brain-architecture-server-map.md',
-    body: 'om-dev 192.168.1.254: OM Brain (:8390/:8391), Ollama inference, om-brain SQLite. Phase 1 PRIMARY inference host (30 vCPU / 53 GB RAM); inference MUST be isolated via systemd slice/cgroup with hard MemoryMax. NOT Keycloak — SSO is auth0 .253.' },
-  { domain: 'architecture', fact_key: 'host.auth0', source_ref: '02-brain-architecture-server-map.md',
-    body: 'auth0 192.168.1.253: Keycloak SSO :8080 + PostgreSQL for OIDC realms orthodoxmetrics, omai, omstudio, workshop.' },
+    body: 'om-dev 192.168.1.254: OM Brain (:8390/:8391), Ollama inference, om-brain SQLite. Phase 1 PRIMARY inference host (30 vCPU / 53 GB RAM); inference MUST be isolated via systemd slice/cgroup with hard MemoryMax. NOT Keycloak — SSO is auth1/keycloak .253. DNS auth01 is FreeIPA .252, not this host.' },
+  { domain: 'architecture', fact_key: 'host.auth1', source_ref: '02-brain-architecture-server-map.md',
+    body: 'auth1 / keycloak 192.168.1.253: Keycloak SSO :8080 + PostgreSQL for OIDC realms orthodoxmetrics, omai, omstudio, workshop (Docker). Legacy inventory id auth0.' },
   { domain: 'architecture', fact_key: 'host.workshop', source_ref: '92-brain-hardware-confirmation-phase1.md',
     body: 'om-workshop 192.168.1.251: Workshop app, low coupling. Secondary/pilot inference host for 3B-4B models.' },
 
