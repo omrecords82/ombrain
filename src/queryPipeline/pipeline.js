@@ -209,6 +209,127 @@ async function handlePrayer(query) {
   };
 }
 
+/**
+ * Pastoral handler — spiritual-counsel guidance on confession, repentance,
+ * grief, temptation, and the passions.
+ *
+ * REBUILD NOTE (2026-06-28): originally introduced in the closed PR #282.
+ * Re-implemented here. This handler is strictly INFORMATIONAL and always
+ * directs the user to a priest / spiritual father for actual confession and
+ * spiritual direction. It must never present itself as clergy.
+ */
+async function handlePastoral(query) {
+  const lower = String(query || '').toLowerCase();
+  const referral =
+    'This is informational guidance from Orthodox tradition and is not a substitute ' +
+    'for confession or the counsel of your priest or spiritual father. Please speak ' +
+    'with a priest for confession and personal spiritual direction.';
+
+  if (lower.includes('confess')) {
+    return {
+      type: 'pastoral.confession',
+      referral,
+      answer:
+        'Preparation for confession in the Orthodox tradition includes prayerful self-examination ' +
+        'against the commandments and the teachings of the Church, genuine repentance (metanoia — ' +
+        'a turning of the whole self toward God), and the intention to amend one\'s life. Many find ' +
+        'it helpful to use a pre-confession examination of conscience and to fast or pray beforehand. ' +
+        'Confession itself is made before God in the presence of a priest, who is a witness and not the judge. ' +
+        referral,
+    };
+  }
+
+  if (lower.includes('grief') || lower.includes('griev') || lower.includes('mourn')) {
+    return {
+      type: 'pastoral.grief',
+      referral,
+      answer:
+        'The Orthodox Church meets grief with hope in the Resurrection. We mourn, yet "not as those who have no hope" ' +
+        '(1 Thess. 4:13). The Church prays for the departed, offers memorial services (Panikhida), and commends ' +
+        'the grieving to the comfort of Christ, who Himself wept at the tomb of Lazarus. Lean on prayer, the ' +
+        'sacraments, and your parish community. ' + referral,
+    };
+  }
+
+  if (lower.includes('temptation') || lower.includes('passion') || lower.includes('despair') || lower.includes('acedia')) {
+    return {
+      type: 'pastoral.struggle',
+      referral,
+      answer:
+        'The Fathers teach that struggle against the passions and temptations is the normal path of the Christian ' +
+        'life, not a sign of failure. Watchfulness (nepsis), the Jesus Prayer, frequent confession and communion, ' +
+        'and humility before God are the tradition\'s remedies. Despair (and its cousin acedia) is itself a ' +
+        'temptation to be resisted through hope in God\'s mercy. ' + referral,
+    };
+  }
+
+  if (lower.includes('forgiv')) {
+    return {
+      type: 'pastoral.forgiveness',
+      referral,
+      answer:
+        'Forgiveness is central to Orthodox life: we ask God\'s forgiveness and extend it to others, as in the ' +
+        'Lord\'s Prayer and the rite of Forgiveness Sunday before Great Lent. Forgiving does not always mean ' +
+        'forgetting harm, but releasing the desire for vengeance and entrusting judgment to God. ' + referral,
+    };
+  }
+
+  return {
+    type: 'pastoral.general',
+    referral,
+    answer:
+      'Orthodox pastoral life is grounded in repentance, prayer, the sacraments (especially Confession and the ' +
+      'Eucharist), and the guidance of a spiritual father within a parish community. ' + referral,
+  };
+}
+
+/**
+ * Ops handler — operational / governance / infrastructure queries.
+ *
+ * REBUILD NOTE (2026-06-28): originally introduced in the closed PR #282.
+ * Re-implemented here. For action-oriented operational questions (restart,
+ * deploy, incident) it defers to the governance diagnose() flow via the
+ * orchestrator; the pipeline-level handler returns a structured, read-only
+ * summary plus current fleet-health context when an inventory snapshot is
+ * available. It NEVER executes infrastructure actions itself.
+ *
+ * @param {string} query
+ * @param {object} [config]
+ * @param {object} [config.inventorySummary] - latest inventory summary, if any
+ */
+async function handleOps(query, config = {}) {
+  const { computeFleetHealthFromSummary } = require('../util/platformHealth');
+  const summary = config.inventorySummary || null;
+  const health = computeFleetHealthFromSummary(summary);
+
+  const lower = String(query || '').toLowerCase();
+  const isAction = /\b(restart|reboot|deploy|rollback|provision|stop|start service|kill)\b/.test(lower);
+
+  const healthLine = health.score == null
+    ? 'Fleet health is currently unknown (no inventory snapshot available).'
+    : `Fleet health: ${health.score}/100 (${health.severity}) — ${health.detail}.`;
+
+  if (isAction) {
+    return {
+      type: 'ops.action_advisory',
+      requiresGovernance: true,
+      health,
+      answer:
+        `${healthLine} This is an action-class operational request and must go through the OM Brain ` +
+        'governance flow (diagnose → audit → approval) before any change is made. The Brain observes, ' +
+        'analyzes, explains, and recommends; it does not execute infrastructure actions autonomously.',
+    };
+  }
+
+  return {
+    type: 'ops.status',
+    health,
+    answer:
+      `${healthLine} Ask about a specific host, service, or incident for more detail, or submit an ` +
+      'action request (restart/deploy) to receive a governed recommendation.',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // QueryPipeline class
 // ---------------------------------------------------------------------------
@@ -253,6 +374,8 @@ class QueryPipeline {
       else if (mode === 'study')    answer = await handleStudy(query);
       else if (mode === 'church')   answer = await handleChurch(query, this.churchConfig);
       else if (mode === 'prayer')   answer = await handlePrayer(query);
+      else if (mode === 'pastoral') answer = await handlePastoral(query);
+      else if (mode === 'ops')      answer = await handleOps(query, { inventorySummary: this.inventorySummary });
       else {
         // general → LLM orchestrator
         if (this.orchestrator && typeof this.orchestrator.ask === 'function') {
@@ -312,4 +435,6 @@ module.exports = {
   handleStudy,
   handleChurch,
   handlePrayer,
+  handlePastoral,
+  handleOps,
 };

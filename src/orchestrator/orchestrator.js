@@ -380,6 +380,7 @@ class Orchestrator {
     try {
       ({ classifyIntent } = require('../modes/index'));
       ({ handleCalendar, handleStudy, handlePrayer } = require('../queryPipeline/pipeline'));
+      // pastoral/ops handlers are required lazily at their branch sites
     } catch (e) {
       logger.warn('ask_mode_import_error', { name: e && e.name });
       // Fall through to diagnose() if modes modules are unavailable
@@ -436,6 +437,12 @@ class Orchestrator {
 
       if (mode === 'prayer') {
         detail = await handlePrayer(q);
+        return { mode, answer: detail.answer, detail };
+      }
+
+      if (mode === 'pastoral') {
+        const { handlePastoral } = require('../queryPipeline/pipeline');
+        detail = await handlePastoral(q);
         return { mode, answer: detail.answer, detail };
       }
 
