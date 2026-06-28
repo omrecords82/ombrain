@@ -548,6 +548,44 @@ function createServer(deps = {}) {
     return res.json({ count: history.length, items: history });
   });
 
+  /**
+   * GET /brain/session/:id
+   * Session summary: recent decisions for the session plus the by-the-way
+   * follow-up history. Read-only; no LLM. Used to inspect what the Brain has
+   * decided/queued within a conversation session.
+   */
+  app.get('/brain/session/:id', (req, res) => {
+    if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+    const sessionId = req.params.id;
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+
+    let decisions = [];
+    try {
+      const all = db.listDecisions(500) || [];
+      decisions = all.filter((d) => d && d.session_id === sessionId).slice(0, limit);
+    } catch (_) {
+      decisions = [];
+    }
+
+    let btw = [];
+    if (orchestrator && orchestrator.btwQueue && typeof orchestrator.btwQueue.history === 'function') {
+      try {
+        btw = orchestrator.btwQueue.history(sessionId) || [];
+      } catch (_) {
+        btw = [];
+      }
+    }
+
+    return res.json({
+      ok: true,
+      session_id: sessionId,
+      decision_count: decisions.length,
+      decisions,
+      btw_count: btw.length,
+      btw_history: btw,
+    });
+  });
+
   // -------------------------------------------------------------------------
   // §5 — Correction memory: full feedback REST surface
   // -------------------------------------------------------------------------
