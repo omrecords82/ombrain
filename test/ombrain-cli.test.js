@@ -50,6 +50,7 @@ test('--help documents topology + server commands', async () => {
   assert.match(r.stdout, /Topology:/);
   assert.match(r.stdout, /server add <name> <host>/);
   assert.match(r.stdout, /set-master/);
+  assert.match(r.stdout, /--json/);
 });
 
 test('unknown command exits 1', async () => {
@@ -69,6 +70,12 @@ test('server add / set-master / ports / list / remove', async () => {
 
   r = await run(['server', 'list'], { OMBRAIN_SERVERS: reg });
   assert.strictEqual(r.code, 0);
+  assert.match(r.stdout, /registry:/);
+  assert.match(r.stdout, /master/);
+  assert.match(r.stdout, /2001/);
+
+  r = await run(['server', 'list', '--json'], { OMBRAIN_SERVERS: reg });
+  assert.strictEqual(r.code, 0);
   const list = JSON.parse(r.stdout);
   assert.strictEqual(list.servers.length, 2);
   assert.strictEqual(list.servers[0].role, 'master');        // master sorts first
@@ -77,7 +84,7 @@ test('server add / set-master / ports / list / remove', async () => {
   // Promote backup1 -> master demotes the old master.
   r = await run(['server', 'set-master', 'backup1'], { OMBRAIN_SERVERS: reg });
   assert.strictEqual(r.code, 0);
-  r = await run(['server', 'list'], { OMBRAIN_SERVERS: reg });
+  r = await run(['server', 'list', '--json'], { OMBRAIN_SERVERS: reg });
   const list2 = JSON.parse(r.stdout);
   const master = list2.servers.find((s) => s.role === 'master');
   assert.strictEqual(master.name, 'backup1');
@@ -89,7 +96,7 @@ test('server add / set-master / ports / list / remove', async () => {
   // Remove.
   r = await run(['server', 'remove', 'backup1'], { OMBRAIN_SERVERS: reg });
   assert.strictEqual(r.code, 0);
-  r = await run(['server', 'list'], { OMBRAIN_SERVERS: reg });
+  r = await run(['server', 'list', '--json'], { OMBRAIN_SERVERS: reg });
   assert.strictEqual(JSON.parse(r.stdout).servers.length, 1);
 });
 
@@ -136,7 +143,8 @@ test('fails over from a dead master pool to a backup', async () => {
   try {
     const r = await run(['health'], { OMBRAIN_SERVERS: reg });
     assert.strictEqual(r.code, 0, r.stderr);
-    assert.match(r.stdout, /"port":\s*\d+/);
+    assert.match(r.stdout, /stub\s+ok/);
+    assert.match(r.stdout, /port:\s*\d+/);
     assert.match(r.stderr, /via backup: backup1/);
   } finally {
     live.close();
@@ -162,7 +170,8 @@ test('--url uses one explicit endpoint and ignores the registry', async () => {
   try {
     const r = await run(['health', '--url', `http://127.0.0.1:${p}`], { OMBRAIN_SERVERS: reg });
     assert.strictEqual(r.code, 0, r.stderr);
-    assert.match(r.stdout, new RegExp(`"port":\\s*${p}`));
+    assert.match(r.stdout, /stub\s+ok/);
+    assert.match(r.stdout, new RegExp(`port:\\s*${p}`));
   } finally {
     s.close();
   }
@@ -182,9 +191,12 @@ test('server status reports reachable/unreachable per server', async () => {
   });
   try {
     const r = await run(['server', 'status'], { OMBRAIN_SERVERS: reg });
-    // master dead -> exit code 3, but JSON still printed
+    // master dead -> exit code 3, but output still printed
     assert.strictEqual(r.code, 3);
-    const j = JSON.parse(r.stdout);
+    assert.match(r.stdout, /master.*DOWN/i);
+    assert.match(r.stdout, /backup1.*UP/i);
+
+    const j = JSON.parse((await run(['server', 'status', '--json'], { OMBRAIN_SERVERS: reg })).stdout);
     const master = j.topology_status.find((x) => x.role === 'master');
     const backup = j.topology_status.find((x) => x.role === 'backup');
     assert.strictEqual(master.reachable, false);

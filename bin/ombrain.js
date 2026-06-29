@@ -87,9 +87,193 @@ function die(msg, code = 1) {
 }
 function note(msg) { process.stderr.write(dim(msg) + '\n'); }
 
+/** Print API data: human-readable by default; pass --json for machine output. */
+function emit(flags, data, formatter) {
+  if (flags && flags.json) {
+    process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    return;
+  }
+  if (typeof data === 'string') {
+    process.stdout.write(data + '\n');
+    return;
+  }
+  const text = typeof formatter === 'function' ? formatter(data) : formatGeneric(data);
+  process.stdout.write(text + '\n');
+}
+
 function out(obj) {
-  if (typeof obj === 'string') process.stdout.write(obj + '\n');
-  else process.stdout.write(JSON.stringify(obj, null, 2) + '\n');
+  emit({ json: false }, obj);
+}
+
+function formatGeneric(b) {
+  if (b == null) return '';
+  if (Array.isArray(b)) return b.map((x) => (typeof x === 'object' ? JSON.stringify(x) : String(x))).join('\n');
+  if (typeof b !== 'object') return String(b);
+  return Object.entries(b)
+    .filter(([k, v]) => v != null && v !== '' && k !== 'ok')
+    .map(([k, v]) => {
+      if (Array.isArray(v)) return `${k}:\n${v.map((x) => '  ' + (typeof x === 'object' ? JSON.stringify(x) : x)).join('\n')}`;
+      if (typeof v === 'object') return `${k}: ${JSON.stringify(v)}`;
+      return `${k}: ${v}`;
+    })
+    .join('\n');
+}
+
+function formatHealth(b) {
+  const svc = b.service || 'om-brain';
+  const status = b.ok ? green('ok') : red('FAIL');
+  const lines = [`${bold(svc)}  ${status}`];
+  if (b.phase != null) lines.push(`  phase: ${b.phase}`);
+  if (b.posture) lines.push(`  posture: ${b.posture}`);
+  if (b.memory_backend) lines.push(`  memory: ${b.memory_backend}`);
+  if (b.node_env) lines.push(`  env: ${b.node_env}`);
+  if (b.llm_endpoint_allowed != null) {
+    const llm = b.llm_endpoint_allowed ? green('allowed') : yellow('blocked');
+    lines.push(`  llm: ${llm}${b.llm_endpoint_reason ? ' (' + b.llm_endpoint_reason + ')' : ''}`);
+  }
+  if (b.executes_actions != null) lines.push(`  executes actions: ${b.executes_actions ? 'yes' : 'no'}`);
+  if (b.port != null) lines.push(`  port: ${b.port}`);
+  return lines.join('\n');
+}
+
+function formatAsk(b) {
+  const lines = [];
+  if (b.mode) lines.push(`${bold('mode')}: ${cyan(b.mode)}`);
+  if (b.answer != null) {
+    if (lines.length) lines.push('');
+    lines.push(typeof b.answer === 'string' ? b.answer : String(b.answer));
+  }
+  if (b.recommendation && b.recommendation !== b.answer) {
+    lines.push('');
+    lines.push(`${bold('recommendation')}: ${b.recommendation}`);
+  }
+  if (b.detail && b.detail.type) {
+    lines.push('');
+    lines.push(dim(`detail: ${b.detail.type}`));
+  }
+  return lines.join('\n');
+}
+
+function formatClassify(b) {
+  const parts = [`${bold('mode')}: ${cyan(b.mode || 'unknown')}`];
+  if (b.detail_type) parts.push(`${bold('type')}: ${b.detail_type}`);
+  return parts.join('\n');
+}
+
+function formatPascha(b) {
+  if (b.pascha) {
+    const disp = b.pascha_display ? ` (${b.pascha_display})` : '';
+    return `Pascha ${b.year}: ${bold(b.pascha)}${disp}`;
+  }
+  return formatGeneric(b);
+}
+
+function formatFasting(b) {
+  const level = b.level != null ? b.level : 'unknown';
+  return `${b.date}: ${bold(level)}${b.reason ? ' — ' + b.reason : ''}`;
+}
+
+function formatFeasts(b) {
+  const lines = [`Feasts for ${b.year} (${b.moveable_count || 0} moveable, ${b.fixed_count || 0} fixed)`, ''];
+  const printGroup = (label, items) => {
+    if (!items || !items.length) return;
+    lines.push(bold(label));
+    for (const f of items) lines.push(`  ${f.date}  ${f.name}`);
+    lines.push('');
+  };
+  printGroup('Moveable', b.moveable_feasts);
+  printGroup('Fixed', b.fixed_feasts);
+  return lines.join('\n').trimEnd();
+}
+
+function formatToday(b) {
+  const lines = [`${bold('Today')} ${b.date}`];
+  if (b.season) lines.push(`  season: ${b.season}`);
+  if (b.fasting) {
+    const f = b.fasting;
+    lines.push(`  fasting: ${f.level || 'none'}${f.reason ? ' — ' + f.reason : ''}`);
+  }
+  if (b.saints && b.saints.length) {
+    lines.push(`  saints (${b.saint_count || b.saints.length}):`);
+    for (const s of b.saints.slice(0, 12)) lines.push(`    • ${s.name}`);
+    if (b.saints.length > 12) lines.push(dim(`    … and ${b.saints.length - 12} more`));
+  }
+  return lines.join('\n');
+}
+
+function formatSaints(b) {
+  const cal = b.calendar === 'new' ? 'N.S.' : 'O.S.';
+  const lines = [`Saints ${b.date} (${cal}, ${b.year}) — ${b.count || 0} commemorated`, ''];
+  if (b.saints && b.saints.length) {
+    for (const s of b.saints) lines.push(`  • ${s.name}`);
+  } else {
+    lines.push('  (none recorded)');
+  }
+  return lines.join('\n');
+}
+
+function formatYear(b) {
+  const lines = [`Calendar ${b.year}`];
+  if (b.pascha) lines.push(`  Pascha: ${b.pascha}`);
+  if (b.western_easter) lines.push(`  Western Easter: ${b.western_easter}`);
+  if (b.moveable_feasts) {
+    const n = Array.isArray(b.moveable_feasts) ? b.moveable_feasts.length : Object.keys(b.moveable_feasts).length;
+    lines.push(`  moveable feasts: ${n}`);
+  }
+  if (b.fixed_feasts) {
+    const n = Array.isArray(b.fixed_feasts) ? b.fixed_feasts.length : Object.keys(b.fixed_feasts).length;
+    lines.push(`  fixed feasts: ${n}`);
+  }
+  return lines.join('\n');
+}
+
+function formatRange(b) {
+  const lines = [`Fasting calendar ${b.start} → ${b.end} (${b.count || 0} days)`, ''];
+  if (b.days) {
+    for (const d of b.days) {
+      const f = d.fasting || {};
+      lines.push(`  ${d.date}  ${f.level || 'none'}${f.reason ? ' — ' + f.reason : ''}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function formatModes(b) {
+  const modes = b.modes || b;
+  if (!Array.isArray(modes)) return formatGeneric(b);
+  return modes.map((m) => `  ${cyan(String(m.id || m).padEnd(14))} ${m.description || m.label || ''}`).join('\n').trim();
+}
+
+function formatChurchFind(b) {
+  const churches = b.churches || b.results || [];
+  if (!churches.length) return b.note || 'No churches found.';
+  const lines = [`Found ${churches.length} church(es)`, ''];
+  for (const c of churches) {
+    lines.push(`  ${bold(c.name || 'Unknown')}`);
+    if (c.address) lines.push(`    ${c.address}`);
+    if (c.jurisdiction) lines.push(`    ${dim(c.jurisdiction)}`);
+  }
+  return lines.join('\n');
+}
+
+function formatServerList(data) {
+  const lines = [`registry: ${data.registry}`, ''];
+  if (!data.servers || !data.servers.length) return lines.concat('(no servers registered)').join('\n');
+  lines.push(`${'NAME'.padEnd(12)} ${'ROLE'.padEnd(8)} ${'PRI'.padStart(3)}  ${'HOST'.padEnd(16)} PORTS           POOL`);
+  for (const s of data.servers) {
+    const host = String(s.endpoint || '').replace(/^https?:\/\//, '');
+    lines.push(`${s.name.padEnd(12)} ${String(s.role).padEnd(8)} ${String(s.priority).padStart(3)}  ${host.padEnd(16)} ${String(s.ports).padEnd(15)} ${s.port_count}`);
+  }
+  return lines.join('\n');
+}
+
+function formatServerStatus(report) {
+  if (!report.length) return '(no servers in registry)';
+  return report.map((s) => {
+    const tag = s.reachable ? green('UP  ') : red('DOWN');
+    const sample = `${s.healthy_in_sample}/${s.sampled} healthy in sample`;
+    return `${bold(s.name.padEnd(12))} ${String(s.role).padEnd(7)} ${String(s.host).padEnd(16)} pool ${s.ports}  ${tag}  (${sample})`;
+  }).join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -400,7 +584,7 @@ async function cmdServer(rest, flags) {
         ports: s.ports,
         port_count: portCount(parsePortSpec(s.ports)),
       }));
-      out({ registry: registryPath(false) || '(built-in default)', servers: rows });
+      emit(flags, { registry: registryPath(false) || '(built-in default)', servers: rows }, formatServerList);
       return;
     }
 
@@ -487,7 +671,7 @@ async function cmdServer(rest, flags) {
           reachable: up > 0, probes,
         });
       }
-      out({ topology_status: report });
+      emit(flags, { topology_status: report }, (data) => formatServerStatus(data.topology_status));
       // exit non-zero if the master has no healthy sampled port
       const master = report.find((r) => r.role === 'master');
       if (master && !master.reachable) process.exitCode = 3;
@@ -518,6 +702,7 @@ ${yellow('Global flags:')}
   --url <url>        One explicit endpoint (bypasses the registry / failover)
   --server <name>    Use one named registry server (its pool; no host failover)
   --quiet            Suppress the "[via master: ...]" endpoint note on stderr
+  --json             Machine-readable JSON output (default is plain text)
   --session <id>     Session id for ask/session commands
   --mode <mode>      Force a mode for 'ask' (knowledge|technical|ops|...)
   --timeout <ms>     Per-request timeout (default 30000)
@@ -575,21 +760,21 @@ async function main() {
   const opts = resolveOpts(flags, registry);
 
   // GET/POST helpers that go through the topology-aware request layer.
-  const get = async (p) => {
+  const get = async (p, formatter) => {
     const { status, body } = await topoRequest('GET', p, null, opts);
     if (status >= 400) die(`${status} ${(body && body.error) || ''} ${(body && body.hint) ? '(' + body.hint + ')' : ''}`.trim(), 2);
-    out(body);
+    emit(flags, body, formatter);
   };
-  const post = async (p, payload) => {
+  const post = async (p, payload, formatter) => {
     const { status, body } = await topoRequest('POST', p, payload, opts);
     if (status >= 400) die(`${status} ${(body && body.error) || ''} ${(body && body.hint) ? '(' + body.hint + ')' : ''}`.trim(), 2);
-    out(body);
+    emit(flags, body, formatter);
   };
 
   try {
     switch (cmd) {
       case 'health':
-        return await get('/health');
+        return await get('/health', formatHealth);
 
       case 'ping': {
         const { status, body, endpoint } = await topoRequest('GET', '/health', null, { ...opts, quiet: true });
@@ -604,7 +789,7 @@ async function main() {
           query: rest.join(' '),
           session_id: flags.session,
           force_mode: flags.mode,
-        });
+        }, formatAsk);
       }
 
       case 'classify': {
@@ -612,39 +797,39 @@ async function main() {
         const { status, body } = await topoRequest('POST', '/brain/ask',
           { query: rest.join(' '), session_id: flags.session }, opts);
         if (status >= 400) die(`${status} ${(body && body.error) || ''}`.trim(), 2);
-        out({ query: rest.join(' '), mode: body && body.mode, detail_type: body && body.detail && body.detail.type });
+        emit(flags, { query: rest.join(' '), mode: body && body.mode, detail_type: body && body.detail && body.detail.type }, formatClassify);
         return;
       }
 
       case 'modes':
-        return await get('/brain/modes');
+        return await get('/brain/modes', formatModes);
 
       // ---- Calendar ----
       case 'pascha':
         if (!rest[0]) die('usage: ombrain pascha <year>');
-        return await get(`/brain/calendar/pascha/${encodeURIComponent(rest[0])}`);
+        return await get(`/brain/calendar/pascha/${encodeURIComponent(rest[0])}`, formatPascha);
       case 'year':
         if (!rest[0]) die('usage: ombrain year <year>');
-        return await get(`/brain/calendar/year/${encodeURIComponent(rest[0])}`);
+        return await get(`/brain/calendar/year/${encodeURIComponent(rest[0])}`, formatYear);
       case 'feasts':
         if (!rest[0]) die('usage: ombrain feasts <year>');
-        return await get(`/brain/calendar/feasts/${encodeURIComponent(rest[0])}`);
+        return await get(`/brain/calendar/feasts/${encodeURIComponent(rest[0])}`, formatFeasts);
       case 'today':
-        return await get('/brain/calendar/today');
+        return await get('/brain/calendar/today', formatToday);
       case 'saints': {
         const [month, day, calendar, year] = rest;
         if (!month || !day) die('usage: ombrain saints <month> <day> [old|new] [year]');
         return await get('/brain/calendar/saints' + qs({
           month, day, calendar: calendar || 'old', year: year || new Date().getUTCFullYear(),
-        }));
+        }), formatSaints);
       }
       case 'fasting':
         if (!rest[0]) die('usage: ombrain fasting <YYYY-MM-DD>');
-        return await get('/brain/calendar/fasting' + qs({ date: rest[0] }));
+        return await get('/brain/calendar/fasting' + qs({ date: rest[0] }), formatFasting);
       case 'range': {
         const [start, end] = rest;
         if (!start || !end) die('usage: ombrain range <start YYYY-MM-DD> <end YYYY-MM-DD>');
-        return await get('/brain/calendar/range' + qs({ start, end }));
+        return await get('/brain/calendar/range' + qs({ start, end }), formatRange);
       }
 
       // ---- Theology ----
@@ -652,7 +837,7 @@ async function main() {
         const sub = rest[0];
         if (sub === 'ask') {
           if (rest.length < 2) die('usage: ombrain theology ask <query...>');
-          return await post('/brain/theology/ask', { query: rest.slice(1).join(' ') });
+          return await post('/brain/theology/ask', { query: rest.slice(1).join(' ') }, formatAsk);
         }
         if (sub === 'topics') return await get('/brain/theology/topics');
         if (sub === 'sources') return await get('/brain/theology/sources');
@@ -669,7 +854,7 @@ async function main() {
           return await post('/brain/churches/find', {
             lat: Number(lat), lng: Number(lng),
             radius_miles: miles ? Number(miles) : undefined,
-          });
+          }, formatChurchFind);
         }
         if (sub === 'jurisdictions') return await get('/brain/churches/jurisdictions');
         die('usage: ombrain church <find|jurisdictions>');

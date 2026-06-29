@@ -22,7 +22,9 @@ ports** (e.g. `60000-62000`). For every request it:
 3. **fails over** to the next server when a host's entire pool is unreachable.
 
 The endpoint that actually served the request is printed on **stderr**
-(`[via master: ...]` / `[via backup: ...]`), so stdout stays clean JSON for piping.
+(`[via master: ...]` / `[via backup: ...]`). **stdout** is human-readable plain
+text by default; pass **`--json`** when you need machine-readable output for
+scripts or piping.
 
 ### Registry file
 
@@ -114,7 +116,7 @@ ombrain server status                     # probe each host's pool health
 ```text
 Core
   ombrain ask <query...>                 Ask anything; routed by the mode router
-  ombrain health                         Service health (full JSON)
+  ombrain health                         Service health (plain text; --json for full object)
   ombrain ping                           Health as a script check (exit 0/3)
   ombrain classify <query...>            Show the routed mode without a full answer
   ombrain modes                          List available modes
@@ -138,18 +140,22 @@ Servers (registry / topology)
 ```
 
 ### Global flags
-`--url <url>`, `--server <name>`, `--quiet`, `--session <id>`, `--mode <mode>`,
+`--url <url>`, `--server <name>`, `--quiet`, `--json`, `--session <id>`, `--mode <mode>`,
 `--timeout <ms>`, `-h/--help`, `-v/--version`.
+
+**Output:** commands print human-readable plain text by default. Add **`--json`**
+for the raw API response object (useful in scripts: `ombrain health --json | jq .ok`).
 
 ---
 
 ## Examples
 
 ```bash
-ombrain pascha 2026                       # 2026-04-12
+ombrain pascha 2026                       # Pascha 2026: 2026-04-12 (Sun Apr 12 2026)
+ombrain pascha 2026 --json                # {"ok":true,"year":2026,"pascha":"2026-04-12",...}
 ombrain saints 12 6 old 2026              # St. Nicholas -> Dec 19 N.S.
-ombrain ask "what is theosis"             # -> mode: knowledge
-ombrain ask "fleet health status"         # -> mode: technical
+ombrain ask "what is theosis"             # mode: study + answer text
+ombrain ask "fleet health status"        # mode: technical + answer text
 ombrain ask "restart nginx" --mode ops    # routed to governance, not executed
 ombrain --url http://127.0.0.1:60000 health   # one explicit port, no failover
 ombrain --server backup1 health           # target one named host's pool
