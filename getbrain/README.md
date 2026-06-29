@@ -20,7 +20,7 @@ From a WSL or Linux workstation on **192.168.1.0/24**:
 
 No internet, no SMS, no email gateway. The installed CLI talks to the Brain
 over the LAN using the master/backup + port-pool registry
-(`/etc/om-brain/ombrain.servers.json`, master `192.168.1.254`, pool `60000-62000`).
+(`/etc/om-brain/ombrain.servers.json`, master `192.168.1.254`, port `8390`).
 
 ---
 
@@ -96,9 +96,14 @@ The service strips a leading `/getbrain` so it works behind the nginx
 
 ## Server-side prerequisite (Brain LAN exposure)
 
-For the installed `ombrain` to actually reach the Brain, the Brain must be
-reachable on the LAN at the configured host/pool. Today the Brain binds
-`127.0.0.1`. Expose it to the subnet (e.g. nginx on `192.168.1.254` proxying the
-port pool, allow-listed to `192.168.1.0/24`) — see the handoff notes. `getbrain`
-installs and configures the client either way; reachability is a separate
-server-side step.
+For the installed `ombrain` to reach the Brain over the LAN, the Brain API must
+be exposed on the LAN. This is **live in production**: an nginx edge on
+`192.168.1.254:8390` proxies to the loopback Brain (`127.0.0.1:8390`),
+allow-listed to `192.168.1.0/24` (see `om-brain/deploy/om-brain-lan-api.conf` and
+`install-brain-lan-nginx.sh`, wired into `deploy.sh`). So `getbrain` seeds the
+registry with master `192.168.1.254` port `8390` and remote `ombrain` works
+immediately.
+
+> A multi-port pool (e.g. `60000-62000`) remains supported by the CLI/registry
+> for a future Brain worker cluster, but production currently uses the single
+> `8390` LAN API port.

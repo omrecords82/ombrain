@@ -7,7 +7,7 @@
 #
 # Usage:
 #   sudo bash om-brain/getbrain/install-getbrain.sh [--repo /var/www/omai] \
-#        [--pin <PIN>] [--brain-host 192.168.1.254] [--ports 60000-62000] \
+#        [--pin <PIN>] [--brain-host 192.168.1.254] [--ports 8390] \
 #        [--no-nginx] [--uninstall]
 #
 set -euo pipefail
@@ -15,7 +15,7 @@ set -euo pipefail
 REPO="/var/www/omai"
 PIN=""
 BRAIN_HOST="192.168.1.254"
-PORTS="60000-62000"
+PORTS="8390"
 DO_NGINX=1
 UNINSTALL=0
 

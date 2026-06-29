@@ -106,5 +106,11 @@ if [[ -x "${APP_DIR}/deploy/install-ombrain.sh" ]]; then
     echo "[deploy] WARNING: install-ombrain failed (non-fatal)"
 fi
 
+echo "[deploy] installing/refreshing Brain LAN API nginx edge (192.168.1.254:8390)"
+if [[ -x "${APP_DIR}/deploy/install-brain-lan-nginx.sh" ]]; then
+  bash "${APP_DIR}/deploy/install-brain-lan-nginx.sh" || \
+    echo "[deploy] WARNING: install-brain-lan-nginx failed (non-fatal)"
+fi
+
 echo "[deploy] done. Follow deploy/VERIFY.md to confirm the definition-of-done."
 echo "[deploy] quick check: systemctl status om-brain.service --no-pager"

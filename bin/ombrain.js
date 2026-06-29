@@ -61,7 +61,7 @@ function defaultRegistry() {
         name: 'master',
         scheme: 'http',
         host: '192.168.1.254',
-        ports: '60000-62000',
+        ports: '8390',
         role: 'master',
         priority: 0,
       },

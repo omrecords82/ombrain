@@ -7,7 +7,7 @@ const http = require('node:http');
 process.env.GETBRAIN_PIN = 'test-pin-1234';
 process.env.GETBRAIN_ALLOW_CIDR = '192.168.1.0/24,127.0.0.1/32';
 process.env.GETBRAIN_BRAIN_HOST = '192.168.1.254';
-process.env.GETBRAIN_BRAIN_PORTS = '60000-62000';
+process.env.GETBRAIN_BRAIN_PORTS = '8390';
 process.env.GETBRAIN_PUBLIC_BASE = 'http://orthodoxmetrics.com/getbrain';
 
 const gb = require('../getbrain/server.js');
@@ -43,7 +43,7 @@ test('oneLiner + bootstrapScript carry config', () => {
   assert.match(ol, /curl -fsSL "http:\/\/orthodoxmetrics\.com\/getbrain\/bootstrap\.sh\?token=TOK" \| sudo bash/);
   const bs = gb.bootstrapScript('TOK2');
   assert.match(bs, /BRAIN_HOST="192\.168\.1\.254"/);
-  assert.match(bs, /BRAIN_PORTS="60000-62000"/);
+  assert.match(bs, /BRAIN_PORTS="8390"/);
   assert.match(bs, /--register-master "\$BRAIN_HOST" --ports "\$BRAIN_PORTS"/);
 });
 

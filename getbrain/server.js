@@ -20,7 +20,7 @@
  *   GETBRAIN_PIN           shared bootstrap PIN    (REQUIRED)
  *   GETBRAIN_ALLOW_CIDR    comma list of CIDRs     (default 192.168.1.0/24,127.0.0.1/32)
  *   GETBRAIN_BRAIN_HOST    Brain master host       (default 192.168.1.254)
- *   GETBRAIN_BRAIN_PORTS   Brain port pool         (default 60000-62000)
+ *   GETBRAIN_BRAIN_PORTS   Brain port(s)           (default 8390; range ok)
  *   GETBRAIN_ASSET_DIR     dir holding ombrain.js + install-ombrain.sh
  *                          (default: ../bin and ../deploy resolved from here)
  *   GETBRAIN_PUBLIC_BASE   public base path for the one-liner
@@ -44,7 +44,7 @@ const CFG = {
   allowCidr: (process.env.GETBRAIN_ALLOW_CIDR || '192.168.1.0/24,127.0.0.1/32')
     .split(',').map(s => s.trim()).filter(Boolean),
   brainHost: process.env.GETBRAIN_BRAIN_HOST || '192.168.1.254',
-  brainPorts: process.env.GETBRAIN_BRAIN_PORTS || '60000-62000',
+  brainPorts: process.env.GETBRAIN_BRAIN_PORTS || '8390',
   assetCli: process.env.GETBRAIN_ASSET_CLI ||
     path.resolve(__dirname, '..', 'bin', 'ombrain.js'),
   assetInstaller: process.env.GETBRAIN_ASSET_INSTALLER ||
