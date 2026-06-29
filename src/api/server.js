@@ -386,6 +386,45 @@ function createServer(deps = {}) {
   });
 
   // -------------------------------------------------------------------------
+  // Teaching Agent v1 — skill/procedure proposal compiler (no execution)
+  // -------------------------------------------------------------------------
+
+  const { processTeachingRequest } = require('../agents/teachingAgent');
+
+  app.post('/brain/teach/skill-proposal', async (req, res) => {
+    const b = req.body || {};
+    const dryRun = !!(b.dry_run || b.dryRun || req.query.dry_run === '1' || req.query.dry_run === 'true');
+    const submit = !dryRun && !!(b.submit !== false);
+
+    if (submit && (!db || typeof db.upsertProcedure !== 'function')) {
+      return res.status(503).json({ ok: false, error: 'no_db' });
+    }
+
+    try {
+      const result = await processTeachingRequest(b.input || b.manifest || b, {
+        db,
+        governance,
+        dryRun: dryRun || !submit,
+        submit,
+        sessionId: b.session_id || b.sessionId || null,
+      });
+
+      if (!result.ok) {
+        const code = result.error === 'validation_failed' ? 400 : 403;
+        return res.status(code).json(redactForLog(result));
+      }
+
+      return res.status(dryRun ? 200 : 201).json(redactForLog(result));
+    } catch (e) {
+      logger.error('teaching_proposal_error', { name: e && e.name, code: e && e.code });
+      if (e.code === 'invalid_teaching_input') {
+        return res.status(400).json({ ok: false, error: e.code, details: e.details });
+      }
+      return res.status(500).json({ ok: false, error: 'teaching_proposal_failed' });
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // Phase 2 — Skill memory (executable scripts: bash, python, node)
   // -------------------------------------------------------------------------
 

@@ -1,0 +1,35 @@
+{
+  "type": "skill_proposal",
+  "name": "proposal-find-env-files-across-hosts",
+  "description": "PROPOSAL ONLY: Plan to locate .env files across fleet hosts. Does NOT execute fleet scan — operator must approve and run manually.",
+  "category": "proposal",
+  "risk_level": "high",
+  "human_gated_action": true,
+  "allowed_inputs": ["host_list", "path_patterns"],
+  "required_context": ["fleet_inventory", "om_doctrine_secrets_handling"],
+  "deterministic_steps": [
+    { "step": 1, "action": "Document target host list from fleet inventory (read-only)", "kind": "plan" },
+    { "step": 2, "action": "Draft find commands for operator review — DO NOT EXECUTE", "kind": "proposal" },
+    { "step": 3, "action": "List credential-handling requirements per OM doctrine", "kind": "governance" },
+    { "step": 4, "action": "Submit proposal to OMStudio for super_admin approval before any scan", "kind": "human_gate" }
+  ],
+  "model_advisory_steps": [
+    "Identify hosts where .env paths differ from standard layout",
+    "Flag hosts in credential-sensitive domains for extra review"
+  ],
+  "forbidden_actions": [
+    "cross_server_fleet_scan_without_approval",
+    "credential_exfiltration",
+    "autonomous_remediation",
+    "direct_shell_execution",
+    "bypass_rule_engine"
+  ],
+  "governance_required": true,
+  "verification_steps": [
+    "human_gated_action is true",
+    "No executable script_body",
+    "OMStudio approval required before fleet operations",
+    "RuleEngine blocks never_auto patterns"
+  ],
+  "rollback_or_disable_plan": "Reject procedure and withdraw OMStudio approval request if operator declines fleet scan plan"
+}

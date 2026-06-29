@@ -1,0 +1,30 @@
+{
+  "type": "skill_proposal",
+  "name": "read-only-doc-registry-search",
+  "description": "Search the OMBrain documentation registry for paths matching a keyword. Read-only; no filesystem writes.",
+  "category": "documentation",
+  "risk_level": "low",
+  "allowed_inputs": ["keyword", "prefix"],
+  "required_context": ["docs_registry_index"],
+  "deterministic_steps": [
+    { "step": 1, "action": "Load docs registry index from local brain memory", "kind": "read" },
+    { "step": 2, "action": "Filter entries by keyword and optional path prefix", "kind": "filter" },
+    { "step": 3, "action": "Return matching paths and titles to operator", "kind": "output" }
+  ],
+  "model_advisory_steps": [
+    "Suggest related doc clusters if keyword is ambiguous",
+    "Note stale registry entries if last_scan is older than policy"
+  ],
+  "forbidden_actions": [
+    "direct_shell_execution",
+    "autonomous_remediation",
+    "filesystem_write",
+    "deploy_without_governance"
+  ],
+  "governance_required": false,
+  "verification_steps": [
+    "Confirm query is read-only GET against docs registry",
+    "No script_body attached"
+  ],
+  "rollback_or_disable_plan": "Reject procedure slug read-only-doc-registry-search via POST /brain/procedures/read-only-doc-registry-search/reject"
+}

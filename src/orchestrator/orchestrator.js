@@ -411,6 +411,20 @@ class Orchestrator {
     return { hit: false, source: 'llm_required', content: null, procedure: null, corrections, tasks };
   }
 
+  /**
+   * Auto-learn a procedure draft from LLM advisory after diagnose().
+   *
+   * TEACHING AGENT CONSTRAINTS (v1 — see src/agents/teachingAgent.js):
+   * - Corrections inform advisory context only; they CANNOT override RuleEngine
+   *   verdicts or promote risky patterns into approved procedures.
+   * - Low-risk only: auto-promote when classification maps to risk_level=low AND
+   *   BRAIN_AUTO_PROMOTE_LOW_RISK=1; medium/high/destructive stay draft (approved=0).
+   * - No executable script_body — text procedures only; skill scripts require
+   *   teaching agent + skillSafety + explicit governance for medium/high.
+   * - Risky patterns (deploy, shell, credentials, cross-server) MUST route to
+   *   human review via POST /brain/teach/skill-proposal, not this path.
+   * - This path is advisory-only extraction; it never executes remediation.
+   */
   _extractAndLearn(opts = {}) {
     if (!this.db || !config.learning.enabled) return null;
     const { decisionId, sessionId, advisory, classification, owningSystem } = opts;
@@ -419,6 +433,12 @@ class Orchestrator {
     const riskLevel = classificationToRisk(classification);
     if (riskLevel === 'destructive') {
       logger.info('learning_skip_destructive', { classification });
+      return null;
+    }
+
+    // Block auto-learn when RuleEngine says never_auto or tier0 — corrections cannot override.
+    if (classification === 'never_auto' || classification === 'tier0_halt_escalate') {
+      logger.info('learning_skip_rule_engine', { classification });
       return null;
     }
 

@@ -1,0 +1,32 @@
+{
+  "type": "skill_proposal",
+  "name": "diagnose-service-health",
+  "description": "Diagnose orthodox-backend or omai service health using local health endpoints and journal hints. Advisory only.",
+  "category": "diagnostic",
+  "risk_level": "low",
+  "allowed_inputs": ["service_name", "host"],
+  "required_context": ["service_map", "health_endpoint_catalog"],
+  "deterministic_steps": [
+    { "step": 1, "action": "Resolve service name to known health URL from service map", "kind": "lookup" },
+    { "step": 2, "action": "GET health endpoint on localhost or LAN host only", "kind": "read" },
+    { "step": 3, "action": "Summarize status, latency, and recent error patterns from response", "kind": "analyze" },
+    { "step": 4, "action": "Recommend operator next steps without executing service changes", "kind": "advisory" }
+  ],
+  "model_advisory_steps": [
+    "Correlate health failure with open tasks in brain memory",
+    "Check correction_memory for prior misdiagnoses of same service"
+  ],
+  "forbidden_actions": [
+    "systemctl_restart",
+    "deploy",
+    "direct_shell_execution",
+    "autonomous_remediation"
+  ],
+  "governance_required": false,
+  "verification_steps": [
+    "Health check uses GET only",
+    "No systemctl or restart commands in steps",
+    "RuleEngine classifyChange returns informational for read-only diagnose"
+  ],
+  "rollback_or_disable_plan": "Deactivate via POST /brain/procedures/diagnose-service-health/reject"
+}

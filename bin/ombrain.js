@@ -683,6 +683,7 @@ function parseArgs(argv) {
     else if (a === '--script') { flags.script = argv[++i]; }
     else if (a === '--commit') { flags.commit = true; }
     else if (a === '--dry-run') { flags.dryRun = true; }
+    else if (a === '--submit') { flags.submit = true; }
     else if (a === '--confirm') { flags.confirm = true; }
     else if (a === '--source') { flags.source = argv[++i]; }
     else if (a.startsWith('--source=')) { flags.source = a.slice(9); }
@@ -904,6 +905,10 @@ ${yellow('Skills (executable scripts):')}
                    [--tags a,b]  OR  --script '...'
   skill|skills run <key> [--dry-run] [--commit]  Dry-run default; --commit executes
 
+${yellow('Teaching agent (skill/procedure proposals — no execution):')}
+  teach-skill --dry-run <proposal.json>   Validate manifest locally (schema + safety)
+  teach-skill --submit <proposal.json>    Submit to Brain after validation passes
+
 ${yellow('Examples:')}
   ombrain server add master 192.168.1.254 --ports 60000-62000 --role master
   ombrain server add backup1 192.168.1.239 --ports 60000-62000 --role backup
@@ -1105,6 +1110,83 @@ async function cmdSkills(rest, flags, opts) {
 }
 
 // ---------------------------------------------------------------------------
+// Teaching agent — compile/validate/submit skill proposals (no execution)
+// ---------------------------------------------------------------------------
+async function cmdTeachSkill(rest, flags, opts) {
+  const filePath = flags.file || rest[0];
+  if (!filePath) {
+    die('usage: ombrain teach-skill --dry-run|--submit <proposal.json>\n' +
+        '       ombrain teach-skill --dry-run --file ./examples/skills/read-only-doc-registry-search.json');
+  }
+
+  let raw;
+  try {
+    raw = fs.readFileSync(path.resolve(filePath), 'utf8');
+  } catch (e) {
+    die(`could not read ${filePath}: ${e.message}`);
+  }
+
+  let input;
+  try {
+    input = JSON.parse(raw);
+  } catch (e) {
+    die(`invalid JSON in ${filePath}: ${e.message}`);
+  }
+
+  const { processTeachingRequest } = require('../src/agents/teachingAgent');
+
+  if (flags.dryRun || !flags.submit) {
+    const result = await processTeachingRequest(input, { dryRun: true, submit: false });
+    if (flags.json) {
+      emit(flags, result);
+      return;
+    }
+    if (!result.ok) {
+      die(`validation failed: ${(result.errors || [result.error]).join(', ')}`, 2);
+    }
+    out(green('✓ Proposal valid (dry-run)'));
+    out(`  name: ${result.manifest && result.manifest.name}`);
+    out(`  risk: ${result.manifest && result.manifest.risk_level}`);
+    out(`  governance_required: ${result.governance_required}`);
+    if (result.warnings && result.warnings.length) {
+      note(`warnings: ${result.warnings.join(', ')}`);
+    }
+    if (!flags.submit) {
+      note('pass --submit to register after validation');
+    }
+    return;
+  }
+
+  const preCheck = await processTeachingRequest(input, { dryRun: true, submit: false });
+  if (!preCheck.ok) {
+    die(`validation failed: ${(preCheck.errors || [preCheck.error]).join(', ')}`, 2);
+  }
+
+  const { status, body } = await topoRequest('POST', '/brain/teach/skill-proposal', {
+    input,
+    submit: true,
+  }, opts);
+
+  if (status >= 400) die(httpErrorMessage(status, body), 2);
+
+  if (flags.json) {
+    emit(flags, body);
+    return;
+  }
+
+  out(green(`✓ Teaching proposal submitted: ${body.stored && body.stored.slug}`));
+  if (body.governance_required) {
+    out(`  governance: ${body.governance && body.governance.submitted ? 'submitted' : 'pending'}`);
+    if (body.governance && body.governance.omstudio_ref) {
+      out(`  omstudio_ref: ${body.governance.omstudio_ref}`);
+    }
+  }
+  if (body.stored) {
+    out(`  approved: ${body.stored.approved}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
 async function main() {
@@ -1138,6 +1220,13 @@ async function main() {
     const registry = loadRegistry();
     const opts = resolveOpts(flags, registry);
     return cmdDraft(rest, flags, opts);
+  }
+
+  // teach-skill — teaching agent proposal compiler
+  if (cmd === 'teach-skill') {
+    const registry = loadRegistry();
+    const opts = resolveOpts(flags, registry);
+    return cmdTeachSkill(rest, flags, opts);
   }
 
   const registry = loadRegistry();
