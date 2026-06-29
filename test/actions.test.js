@@ -11,6 +11,18 @@ test('brainActionRegistry lists seeded OMAI actions', () => {
   const ids = actions.map((a) => a.id);
   assert.ok(ids.includes('omai.system.status'));
   assert.ok(ids.includes('omai.services.health_check'));
+  assert.ok(ids.includes('omai.work_item.create_draft@v1'));
+});
+
+test('brainActionRegistry lists plane draft action', () => {
+  const actions = registry.listActions({ source: 'plane' });
+  assert.ok(actions.some((a) => a.id === 'plane.issue.create_draft@v1'));
+});
+
+test('brainActionRegistry resolve matches draft intake queries', () => {
+  const match = registry.resolveAction('create a draft work item for login fix');
+  assert.ok(match);
+  assert.strictEqual(match.action.id, 'omai.work_item.create_draft@v1');
 });
 
 test('brainActionRegistry resolve matches system status queries', () => {

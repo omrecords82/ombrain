@@ -317,15 +317,32 @@ function formatActionDetail(b) {
 
 function formatActionRun(b) {
   if (b.dry_run) {
-    return `${yellow('dry-run')} — would run ${b.action_id || 'action'}`;
+    const preview = b.preview && b.preview.input ? ` with title "${b.preview.input.title || '?'}"` : '';
+    return `${yellow('dry-run')} — would run ${b.action_id || 'action'}${preview}`;
   }
   if (b.committed && b.result) {
+    if (b.result.work_item_code) {
+      const plane = b.result.plane_mirror;
+      const planeLine = plane
+        ? (plane.ok ? `  plane: ${plane.issue_identifier || plane.issue_id}` : `  plane: ${yellow('mirror failed')}`)
+        : '';
+      return [
+        `${green('draft created')} ${bold(b.result.work_item_code)}  #${b.result.item_id}`,
+        `  title: ${b.result.title}`,
+        b.result.category ? `  category: ${b.result.category}` : null,
+        planeLine,
+      ].filter(Boolean).join('\n');
+    }
     const summary = b.result.overall_ok != null
       ? (b.result.overall_ok ? green('healthy') : red('unhealthy'))
       : (b.result.fleet_health ? `fleet ${b.result.fleet_health.score}%` : green('ok'));
     return `executed ${b.action_id || 'action'} — ${summary}`;
   }
   return formatGeneric(b);
+}
+
+function formatDraftCreate(b) {
+  return formatActionRun(b);
 }
 
 function formatActionResolve(b) {
@@ -671,6 +688,9 @@ function parseArgs(argv) {
     else if (a.startsWith('--source=')) { flags.source = a.slice(9); }
     else if (a === '--category') { flags.category = argv[++i]; }
     else if (a.startsWith('--category=')) { flags.category = a.slice(11); }
+    else if (a === '--prefix') { flags.prefix = argv[++i]; }
+    else if (a.startsWith('--prefix=')) { flags.prefix = a.slice(9); }
+    else if (a === '--mirror-plane') { flags.mirrorPlane = true; }
     else if (a === '--risk') { flags.risk = argv[++i]; }
     else if (a.startsWith('--risk=')) { flags.risk = a.slice(7); }
     else if (a === '--limit') { flags.limit = parseInt(argv[++i], 10); }
@@ -872,6 +892,10 @@ ${yellow('Actions (OMAI operational bridge):')}
   action|actions resolve <query...>
   action|actions history [--limit N]
 
+${yellow('Draft work items (governance intake):')}
+  draft create --title "..." [--description "..."] [--category om-backend]
+               [--prefix OMOD|OMAD|OMSD] [--mirror-plane] [--dry-run] [--commit]
+
 ${yellow('Skills (executable scripts):')}
   skill|skills list                              List active skills
   skill|skills show <key>                        Show one skill (+ script body)
@@ -891,6 +915,8 @@ ${yellow('Examples:')}
   ombrain skills run echo-test --commit
   ombrain actions list
   ombrain actions run omai.system.status
+  ombrain draft create --title "Fix session cookie" --category om-auth --commit
+  ombrain ask "create a draft work item for OCR column mapping"
 `);
 }
 
@@ -958,6 +984,49 @@ async function cmdActions(rest, flags, opts) {
 
   die(`unknown action subcommand: ${sub}\n` +
     'try: list | show | run | resolve | history');
+}
+
+// ---------------------------------------------------------------------------
+// Draft — convenience wrapper for omai.work_item.create_draft@v1
+// ---------------------------------------------------------------------------
+async function cmdDraft(rest, flags, opts) {
+  const sub = rest[0];
+  const tail = rest.slice(1);
+
+  const post = async (p, payload, formatter) => {
+    const { status, body } = await topoRequest('POST', p, payload, opts);
+    if (status === 403) die('access denied — insufficient permissions for draft intake', 2);
+    if (status === 428) die(`${body && body.message ? body.message : 'confirmation required'} (pass --confirm)`, 2);
+    if (status >= 400) die(httpErrorMessage(status, body), 2);
+    emit(flags, body, formatter);
+  };
+
+  if (sub === 'create') {
+    const title = flags.title || (tail.length ? tail.join(' ') : null);
+    if (!title) {
+      die('usage: ombrain draft create --title "..." [--description "..."] [--category C] ' +
+          '[--prefix OMOD|OMAD|OMSD] [--mirror-plane] [--dry-run|--commit]');
+    }
+    if (!flags.commit && !flags.dryRun) {
+      note('hint: pass --commit to create the draft (dry-run is default for writes)');
+      flags.dryRun = true;
+    }
+    const input = {
+      title,
+      description: flags.description,
+      category: flags.category,
+      prefix: flags.prefix,
+      mirror_plane: !!flags.mirrorPlane,
+    };
+    return post('/brain/actions/omai.work_item.create_draft@v1/run', {
+      input,
+      commit: !!flags.commit,
+      dry_run: flags.dryRun ? true : undefined,
+      confirmed: !!flags.confirm,
+    }, formatDraftCreate);
+  }
+
+  die(`unknown draft subcommand: ${sub}\ntry: create`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1062,6 +1131,13 @@ async function main() {
     const registry = loadRegistry();
     const opts = resolveOpts(flags, registry);
     return cmdActions(rest, flags, opts);
+  }
+
+  // draft — governance intake wrapper
+  if (cmd === 'draft') {
+    const registry = loadRegistry();
+    const opts = resolveOpts(flags, registry);
+    return cmdDraft(rest, flags, opts);
   }
 
   const registry = loadRegistry();

@@ -271,8 +271,12 @@ class Orchestrator {
 
     const q = String(query || '').trim();
     const modeHint = opts.forceMode || opts.mode;
+    const looksDraft = /\b(create|submit|new|add)\b.*\b(draft|work item|work-item)\b/i.test(q)
+      || /\bdraft work item\b/i.test(q)
+      || /\bintake draft\b/i.test(q);
     const looksOps = modeHint === 'ops' || modeHint === 'technical'
-      || /\b(status|health|fleet|system check|inventory)\b/i.test(q);
+      || /\b(status|health|fleet|system check|inventory)\b/i.test(q)
+      || looksDraft;
     if (!looksOps) return null;
 
     try {
@@ -287,8 +291,11 @@ class Orchestrator {
         const out = await actionBridge.runAction(action.id, {
           commit: !action.mutation || execute,
           dry_run: false,
+          input: opts.actionInput,
         });
-        const summary = out.result?.fleet_health
+        const summary = out.result?.work_item_code
+          ? `Draft ${out.result.work_item_code} created (#${out.result.item_id}).`
+          : out.result?.fleet_health
           ? `Fleet health ${out.result.fleet_health.score}% (${out.result.fleet_health.detail || 'ok'}).`
           : out.result?.overall_ok != null
             ? (out.result.overall_ok ? 'All probed services healthy.' : 'One or more services unhealthy.')
@@ -305,7 +312,9 @@ class Orchestrator {
         answer:
           `Matched OMAI action \`${action.id}\` (${action.title}). ` +
           (action.mutation
-            ? 'This action mutates state — run with `ombrain actions run ' + action.id + ' --commit`.'
+            ? (action.id.includes('create_draft')
+              ? 'Run with `ombrain draft create --title "..." --commit` or `ombrain actions run ' + action.id + ' --input \'{"title":"..."}\' --commit`.'
+              : 'This action mutates state — run with `ombrain actions run ' + action.id + ' --commit`.')
             : 'Run with `ombrain actions run ' + action.id + '` or pass execute:true on /brain/ask.'),
         detail: { type: 'ops.action_advisory', action, confidence: resolved.confidence },
       };
