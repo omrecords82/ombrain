@@ -470,7 +470,7 @@ class Orchestrator {
             detail: { operation_run: out, report: out.report },
           };
         }
-        const out = runOperation(this.db, opHint.operation_id, {
+        const out = await runOperation(this.db, opHint.operation_id, {
           commit: !!opts.commit,
           dry_run: !opts.commit,
           description: q.slice(0, 500),

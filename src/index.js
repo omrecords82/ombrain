@@ -18,6 +18,7 @@ const { GovernanceManager } = require('./governance/governanceManager');
 const { EventAdapter } = require('./adapters/eventAdapter');
 const { InventoryAdapter } = require('./adapters/inventoryAdapter');
 const { LogAdapter } = require('./adapters/logAdapter');
+const { createWorkshopClient, probeWorkshopStatus } = require('./adapters/workshopRuntime');
 const { AuditorLoop } = require('./auditor/auditorLoop');
 const { CronManager } = require('./cron/cronManager');
 const { QueryPipeline } = require('./queryPipeline/pipeline');
@@ -32,6 +33,14 @@ function main() {
     node_env: config.nodeEnv,
     llm_base_url_host: new URL(config.llm.baseUrl).host,
   });
+
+  void boot().catch((e) => {
+    logger.error('brain_boot_fatal', { name: e && e.name, message: e && e.message });
+    process.exit(1);
+  });
+}
+
+async function boot() {
 
   const db = new MemoryDB({ dbPath: config.memory.dbPath, embeddingDim: config.memory.embeddingDim }).init();
   logger.info('memory_backend', { backend: db.backendName() });
@@ -53,6 +62,16 @@ function main() {
   });
   const governance = new GovernanceManager({ db, omstudio });
   logger.info('omstudio_governance', { transport: config.omstudio.transport });
+
+  if (config.workshop.probeOnStartup) {
+    const workshop = createWorkshopClient({
+      ...config.workshop,
+      production: config.isProduction,
+    });
+    void probeWorkshopStatus(workshop).catch((e) => {
+      logger.warn('workshop_probe_error', { name: e && e.name });
+    });
+  }
 
   const modeRouter = new ModeRouter({ defaultMode: config.modes && config.modes.defaultMode });
   const orchestrator = new Orchestrator({ db, aiClient, governance, ragRetriever, modeRouter });
@@ -109,4 +128,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { main };
+module.exports = { main, boot };

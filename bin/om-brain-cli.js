@@ -138,6 +138,9 @@ function printHelp() {
   operations run <id> [--host NAME] [--local]  Run operation (fleet: --host om-prod01)
   operations runs [--limit N] [--id ID]       Recent run history
 
+\x1b[33mWorkshop (.251 read-only):\x1b[0m
+  workshop status                           Probe OM Workshop __server/status
+
   help                                Show this help
 `);
 }
@@ -711,7 +714,7 @@ async function cmdOperations(args) {
       printJSON(out);
     } else {
       const commit = flags.commit && !flags.dryRun;
-      const out = runOperation(db, opId, {
+      const out = await runOperation(db, opId, {
         commit,
         dry_run: !commit,
         description: flags.description,
@@ -744,6 +747,28 @@ async function cmdOperations(args) {
 }
 
 // ---------------------------------------------------------------------------
+// Workshop commands
+// ---------------------------------------------------------------------------
+
+async function cmdWorkshop(args) {
+  const { createWorkshopClient, probeWorkshopStatus } = require(path.join(root, 'src/adapters/workshopRuntime'));
+  const { config } = require(path.join(root, 'src/config'));
+  const [sub, ...rest] = args;
+
+  if (sub === 'status') {
+    const client = createWorkshopClient({
+      ...config.workshop,
+      production: config.isProduction,
+    });
+    const probe = await probeWorkshopStatus(client);
+    printJSON(probe);
+    return;
+  }
+
+  printError(`Unknown workshop subcommand: ${sub || '(none)'}. Use: status`);
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -769,6 +794,7 @@ async function main() {
     else if (cmd === 'tasks')      await cmdTasks(args);
     else if (cmd === 'skills')     await cmdSkills(args);
     else if (cmd === 'operations') await cmdOperations(args);
+    else if (cmd === 'workshop')   await cmdWorkshop(args);
     else { printHelp(); printError(`Unknown command: ${cmd}`); }
   } catch (err) {
     printError(err.message);

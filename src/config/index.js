@@ -112,6 +112,15 @@ const config = Object.freeze({
     embeddingDim: num(env.BRAIN_EMBEDDING_DIM, 768),
   },
 
+  workshop: {
+    // Read-only OM Workshop satellite (.251). Default dryrun until ops flips transport.
+    baseUrl: env.OMWORKSHOP_BASE_URL || 'http://192.168.1.251:7071',
+    serviceToken: env.OMWORKSHOP_SERVICE_TOKEN || env.OMSTUDIO_SERVICE_TOKEN || '',
+    transport: (env.OMWORKSHOP_TRANSPORT || 'dryrun').toLowerCase() === 'http' ? 'http' : 'dryrun',
+    // Startup probe on boot (logs target + summary; no mutation).
+    probeOnStartup: bool(env.OMWORKSHOP_PROBE_ON_STARTUP, true),
+  },
+
   omstudio: {
     // Governed ecosystem config (Annex A §G). The base URL targets the .242
     // OMStudio edge / omstudio-embed front — NOT an internal port. Placeholder

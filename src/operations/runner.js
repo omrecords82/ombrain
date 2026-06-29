@@ -16,7 +16,7 @@ const { runHandler } = require('./handlers');
  * @param {string} [opts.triggered_by] - operator | api | schedule | ask
  * @returns {object} run record + handler result
  */
-function runOperation(db, operationId, opts = {}) {
+async function runOperation(db, operationId, opts = {}) {
   if (!db || typeof db.getOperation !== 'function') {
     const err = new Error('database does not support operations');
     err.exitCode = 1;
@@ -59,8 +59,9 @@ function runOperation(db, operationId, opts = {}) {
       rootsPath: opts.rootsPath,
       structurePath: opts.structurePath,
       outPath: opts.outPath,
+      run_id: runId,
     };
-    const result = runHandler(op.handler_ref, db, handlerOpts);
+    const result = await Promise.resolve(runHandler(op.handler_ref, db, handlerOpts));
     const finishedAt = new Date().toISOString();
     const outputSummary = result.output_summary
       || (result.stats ? `total=${result.stats.total}` : 'completed');

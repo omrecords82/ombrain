@@ -3,7 +3,9 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { config } = require('../config');
 const { runScan, DEFAULT_SNAPSHOT } = require('../docRegistry');
+const { createWorkshopClient, probeWorkshopStatus } = require('../adapters/workshopRuntime');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 
@@ -76,10 +78,29 @@ function runSchemaSnapshot(_db, _opts = {}) {
   return spawnScript('scripts/dump-schema.js');
 }
 
+async function runWorkshopStatus(_db, opts = {}) {
+  const client = createWorkshopClient({
+    ...config.workshop,
+    production: config.isProduction,
+  });
+  const probe = await probeWorkshopStatus(client, { run_id: opts.run_id });
+  return {
+    ok: probe.ok,
+    run_id: probe.run_id,
+    target: probe.target,
+    transport: probe.transport,
+    summary: probe.summary,
+    status: probe.status,
+    output_summary: `workshop ${probe.target}: ${probe.summary}`,
+    exit_code: probe.ok ? 0 : 1,
+  };
+}
+
 const HANDLERS = {
   docRegistryScan: runDocRegistryScan,
   hostSnapshot: runHostSnapshot,
   schemaSnapshot: runSchemaSnapshot,
+  workshopStatus: runWorkshopStatus,
 };
 
 function runHandler(handlerRef, db, opts) {
@@ -89,7 +110,7 @@ function runHandler(handlerRef, db, opts) {
     err.exitCode = 1;
     throw err;
   }
-  return fn(db, opts);
+  return fn(db, { ...opts, run_id: opts.run_id });
 }
 
 module.exports = {
@@ -97,5 +118,6 @@ module.exports = {
   runDocRegistryScan,
   runHostSnapshot,
   runSchemaSnapshot,
+  runWorkshopStatus,
   HANDLERS,
 };

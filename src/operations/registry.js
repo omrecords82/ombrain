@@ -27,6 +27,13 @@ const BUILTIN_OPERATIONS = [
     script_ref: 'scripts/dump-schema.js',
   },
   {
+    id: 'workshop.status@v1',
+    title: 'Workshop status probe',
+    description: 'Read-only GET of OM Workshop (.251) __server/status via WorkshopClient',
+    handler_ref: 'workshopStatus',
+    script_ref: null,
+  },
+  {
     id: 'fleet.find_env_files@v1',
     title: 'Fleet .env file location scan',
     description: 'Safe path-only scan for .env and .env.* under /var/www, /opt, /etc/omai on fleet hosts (never reads contents)',

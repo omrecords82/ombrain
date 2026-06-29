@@ -1157,7 +1157,7 @@ function createServer(deps = {}) {
     }
   });
 
-  app.post('/brain/docs/scan', (req, res) => {
+  app.post('/brain/docs/scan', async (req, res) => {
     const { validateIngestAuth } = require('../ingest/platformEventIngest');
     const secretCheck = validateIngestAuth(req.headers['x-om-webhook-secret']);
     if (!secretCheck.ok) {
@@ -1172,7 +1172,7 @@ function createServer(deps = {}) {
       req.query.commit === '1' || req.query.commit === 'true'
     );
     try {
-      const out = runOperation(db, 'doc-registry-scan', {
+      const out = await runOperation(db, 'doc-registry-scan', {
         commit,
         dry_run: !commit,
         description: b.description || 'via POST /brain/docs/scan',
@@ -1271,7 +1271,7 @@ function createServer(deps = {}) {
     const commit = !!(b.commit || b.execute || req.query.commit === '1' || req.query.commit === 'true');
     const dryRun = b.dry_run != null ? !!b.dry_run : !commit;
     try {
-      const out = runOperation(db, operationId, {
+      const out = await runOperation(db, operationId, {
         description: b.description,
         commit,
         dry_run: dryRun,

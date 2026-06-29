@@ -51,16 +51,17 @@ function fixtureStructure(dir) {
 test('operation registry seeds built-in operations', () => {
   const { db } = freshDb();
   const ops = db.listOperations();
-  assert.ok(ops.length >= 4);
+  assert.ok(ops.length >= 5);
   const ids = ops.map((o) => o.id);
   assert.ok(ids.includes('doc-registry-scan'));
   assert.ok(ids.includes('host-snapshot'));
   assert.ok(ids.includes('schema-snapshot'));
+  assert.ok(ids.includes('workshop.status@v1'));
   assert.ok(ids.includes('fleet.find_env_files@v1'));
-  assert.deepStrictEqual(getBuiltinOperations().length, 4);
+  assert.deepStrictEqual(getBuiltinOperations().length, 5);
 });
 
-test('operation run creates run record', () => {
+test('operation run creates run record', async () => {
   const { db } = freshDb();
   const dir = fixtureDir();
   const rootsPath = path.join(dir, 'roots.json');
@@ -69,7 +70,7 @@ test('operation run creates run record', () => {
   fs.writeFileSync(rootsPath, JSON.stringify(fixtureRoots(dir)));
   fs.writeFileSync(structurePath, JSON.stringify(fixtureStructure(dir)));
 
-  const out = runOperation(db, 'doc-registry-scan', {
+  const out = await runOperation(db, 'doc-registry-scan', {
     dry_run: true,
     commit: false,
     rootsPath,
@@ -88,7 +89,7 @@ test('operation run creates run record', () => {
   assert.ok(run.output_summary);
 });
 
-test('doc-registry-scan dry-run and commit paths', () => {
+test('doc-registry-scan dry-run and commit paths', async () => {
   const { db } = freshDb();
   const dir = fixtureDir();
   const rootsPath = path.join(dir, 'roots.json');
@@ -97,7 +98,7 @@ test('doc-registry-scan dry-run and commit paths', () => {
   fs.writeFileSync(rootsPath, JSON.stringify(fixtureRoots(dir)));
   fs.writeFileSync(structurePath, JSON.stringify(fixtureStructure(dir)));
 
-  const dry = runOperation(db, 'doc-registry-scan', {
+  const dry = await runOperation(db, 'doc-registry-scan', {
     dry_run: true,
     rootsPath,
     structurePath,
@@ -107,7 +108,7 @@ test('doc-registry-scan dry-run and commit paths', () => {
   assert.strictEqual(dry.result.dry_run, true);
   assert.strictEqual(db.listDocRegistry({}).length, 0);
 
-  const committed = runOperation(db, 'doc-registry-scan', {
+  const committed = await runOperation(db, 'doc-registry-scan', {
     commit: true,
     dry_run: false,
     rootsPath,
@@ -118,9 +119,9 @@ test('doc-registry-scan dry-run and commit paths', () => {
   assert.ok(db.listDocRegistry({}).length >= 1);
 });
 
-test('failed run records exit_code', () => {
+test('failed run records exit_code', async () => {
   const { db } = freshDb();
-  const out = runOperation(db, 'doc-registry-scan', {
+  const out = await runOperation(db, 'doc-registry-scan', {
     dry_run: true,
     rootsPath: '/nonexistent/roots.json',
     structurePath: '/nonexistent/structure.json',
