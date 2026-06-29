@@ -133,6 +133,11 @@ function printHelp() {
   skills run <key> [--dry-run]        Preview run (default)
   skills run <key> --commit           Execute for real
 
+\x1b[33mOperations:\x1b[0m
+  operations list                         List built-in operations
+  operations run <id> [--commit]          Run operation (dry-run default)
+  operations runs [--limit N] [--id ID]   Recent run history
+
   help                                Show this help
 `);
 }
@@ -658,6 +663,70 @@ async function cmdSkills(args) {
 }
 
 // ---------------------------------------------------------------------------
+// Operations commands
+// ---------------------------------------------------------------------------
+
+async function cmdOperations(args) {
+  const { runOperation } = require(path.join(root, 'src/operations/runner'));
+  const db = loadDB();
+  const flags = {};
+  const positional = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--commit') flags.commit = true;
+    else if (args[i] === '--dry-run') flags.dryRun = true;
+    else if (args[i] === '--limit' && args[i + 1]) flags.limit = Number(args[++i]);
+    else if (args[i] === '--id' && args[i + 1]) flags.operationId = args[++i];
+    else if (args[i] === '--description' && args[i + 1]) flags.description = args[++i];
+    else positional.push(args[i]);
+  }
+  const [sub, ...rest] = positional;
+
+  if (sub === 'list') {
+    const rows = db.listOperations({ active: true });
+    if (rows.length === 0) { console.log('No operations registered.'); db.close(); return; }
+    console.log(`\n\x1b[1mOperations (${rows.length})\x1b[0m\n`);
+    for (const op of rows) {
+      console.log(`  \x1b[36m${op.id.padEnd(22)}\x1b[0m ${op.title}`);
+      console.log(`    ${op.description}`);
+      if (op.script_ref) console.log(`    script: ${op.script_ref}`);
+    }
+    console.log('');
+  } else if (sub === 'run') {
+    const opId = rest[0];
+    if (!opId) printError('Usage: operations run <id> [--commit] [--description "..."]');
+    const commit = flags.commit && !flags.dryRun;
+    const out = runOperation(db, opId, {
+      commit,
+      dry_run: !commit,
+      description: flags.description,
+      triggered_by: 'operator',
+    });
+    printJSON(out);
+  } else if (sub === 'runs') {
+    const rows = db.listOperationRuns({
+      operation_id: flags.operationId,
+      limit: flags.limit || 20,
+    });
+    if (rows.length === 0) { console.log('No operation runs found.'); db.close(); return; }
+    console.log(`\n\x1b[1mOperation runs (${rows.length})\x1b[0m\n`);
+    for (const r of rows) {
+      const statusColor = r.status === 'done' ? '32' : r.status === 'failed' ? '31' : '33';
+      console.log(
+        `  \x1b[36m${r.id.slice(0, 8)}\x1b[0m ` +
+        `\x1b[${statusColor}m${r.status}\x1b[0m ` +
+        `${r.operation_id} exit=${r.exit_code != null ? r.exit_code : '-'}`,
+      );
+      if (r.output_summary) console.log(`    ${r.output_summary.slice(0, 120)}`);
+    }
+    console.log('');
+  } else {
+    printError(`Unknown operations subcommand: ${sub}. Use: list, run, runs`);
+  }
+
+  db.close();
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -682,6 +751,7 @@ async function main() {
     else if (cmd === 'knowledge')  await cmdKnowledge(args);
     else if (cmd === 'tasks')      await cmdTasks(args);
     else if (cmd === 'skills')     await cmdSkills(args);
+    else if (cmd === 'operations') await cmdOperations(args);
     else { printHelp(); printError(`Unknown command: ${cmd}`); }
   } catch (err) {
     printError(err.message);

@@ -436,6 +436,39 @@ class Orchestrator {
       return { session_id: sessionId, ...skillIngest };
     }
 
+    const { matchOperationIntent, runOperation } = require('../operations');
+    const opHint = matchOperationIntent(q);
+    if (opHint) {
+      const execute = !!(opts.execute || opts.commit);
+      if (!execute) {
+        return {
+          mode: 'ops',
+          session_id: sessionId,
+          answer:
+            `This looks like a request to run the **${opHint.title}** operation (\`${opHint.operation_id}\`). ` +
+            'Pass `execute: true` on `/brain/ask` (and `commit: true` to persist) or use ' +
+            '`POST /brain/operations/doc-registry-scan/run`.',
+          detail: { operation_suggestion: opHint },
+        };
+      }
+      if (this.db && typeof this.db.createOperationRun === 'function') {
+        const out = runOperation(this.db, opHint.operation_id, {
+          commit: !!opts.commit,
+          dry_run: !opts.commit,
+          description: q.slice(0, 500),
+          triggered_by: 'ask',
+        });
+        return {
+          mode: 'ops',
+          session_id: sessionId,
+          answer: out.ok
+            ? `Operation \`${opHint.operation_id}\` completed (run ${out.run_id}). ${out.output_summary || ''}`
+            : `Operation \`${opHint.operation_id}\` failed: ${out.output_summary || out.error}`,
+          detail: { operation_run: out },
+        };
+      }
+    }
+
     if (opts.btw && this.btwQueue) {
       const mode = opts.mode || (this.modeRouter && typeof this.modeRouter.classifyIntent === 'function'
         ? this.modeRouter.classifyIntent(q)

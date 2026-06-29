@@ -479,3 +479,38 @@ CREATE INDEX IF NOT EXISTS idx_doc_registry_repo ON doc_registry(repo);
 CREATE INDEX IF NOT EXISTS idx_doc_registry_category ON doc_registry(category);
 CREATE INDEX IF NOT EXISTS idx_doc_registry_status ON doc_registry(status);
 CREATE INDEX IF NOT EXISTS idx_doc_registry_sha256 ON doc_registry(sha256);
+
+-- -----------------------------------------------------------------------------
+-- 18. operation_registry — built-in om-brain operations catalog.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS operation_registry (
+  id              TEXT PRIMARY KEY,
+  title           TEXT NOT NULL,
+  description     TEXT NOT NULL,
+  handler_ref     TEXT NOT NULL,
+  script_ref      TEXT,
+  active          INTEGER NOT NULL DEFAULT 1,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- -----------------------------------------------------------------------------
+-- 19. operation_runs — one row per operation execution.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS operation_runs (
+  id              TEXT PRIMARY KEY,
+  operation_id    TEXT NOT NULL,
+  description     TEXT,
+  status          TEXT NOT NULL DEFAULT 'pending',
+  triggered_by    TEXT NOT NULL DEFAULT 'api',
+  params_json     TEXT,
+  started_at      TEXT,
+  finished_at     TEXT,
+  exit_code       INTEGER,
+  output_summary  TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (operation_id) REFERENCES operation_registry(id)
+);
+CREATE INDEX IF NOT EXISTS idx_operation_runs_op ON operation_runs(operation_id);
+CREATE INDEX IF NOT EXISTS idx_operation_runs_status ON operation_runs(status);
+CREATE INDEX IF NOT EXISTS idx_operation_runs_started ON operation_runs(started_at);

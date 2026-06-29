@@ -1132,6 +1132,8 @@ function createServer(deps = {}) {
   // Documentation registry — om-brain doc index (paths stay in repos)
   // -------------------------------------------------------------------------
 
+  const { runOperation } = require('../operations/runner');
+
   app.get('/brain/docs', (req, res) => {
     if (!db || typeof db.listDocRegistry !== 'function') {
       return res.status(503).json({ ok: false, error: 'no_db' });
@@ -1170,17 +1172,89 @@ function createServer(deps = {}) {
       req.query.commit === '1' || req.query.commit === 'true'
     );
     try {
-      const { runScan } = require('../docRegistry');
-      const result = runScan(commit ? db : null, { commit });
-      return res.json({
-        ok: true,
+      const out = runOperation(db, 'doc-registry-scan', {
+        commit,
         dry_run: !commit,
+        description: b.description || 'via POST /brain/docs/scan',
+        triggered_by: 'api',
+      });
+      const result = out.result || {};
+      return res.json({
+        ok: out.ok,
+        dry_run: result.dry_run != null ? result.dry_run : !commit,
+        run_id: out.run_id,
         stats: result.stats,
-        snapshot_path: result.snapshotPath,
+        snapshot_path: result.snapshot_path,
+        output_summary: out.output_summary,
+        exit_code: out.exit_code,
       });
     } catch (e) {
       logger.error('doc_scan_error', { name: e && e.name });
       return res.status(500).json({ ok: false, error: 'scan_failed', detail: e && e.message });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Operations — built-in catalog + run history
+  // -------------------------------------------------------------------------
+
+  app.get('/brain/operations', (req, res) => {
+    if (!db || typeof db.listOperations !== 'function') {
+      return res.status(503).json({ ok: false, error: 'no_db' });
+    }
+    const activeOnly = req.query.all !== 'true';
+    const rows = db.listOperations({ active: activeOnly ? true : null });
+    return res.json({ count: rows.length, operations: rows });
+  });
+
+  app.get('/brain/operations/runs', (req, res) => {
+    if (!db || typeof db.listOperationRuns !== 'function') {
+      return res.status(503).json({ ok: false, error: 'no_db' });
+    }
+    const limit = Math.min(Number(req.query.limit) || 50, 500);
+    const rows = db.listOperationRuns({
+      operation_id: req.query.operation_id,
+      status: req.query.status,
+      limit,
+    });
+    return res.json({ count: rows.length, runs: rows });
+  });
+
+  app.get('/brain/operations/runs/:run_id', (req, res) => {
+    if (!db || typeof db.getOperationRun !== 'function') {
+      return res.status(503).json({ ok: false, error: 'no_db' });
+    }
+    const row = db.getOperationRun(req.params.run_id);
+    if (!row) return res.status(404).json({ ok: false, error: 'run_not_found' });
+    return res.json({ run: row });
+  });
+
+  app.post('/brain/operations/:id/run', (req, res) => {
+    if (!db || typeof db.createOperationRun !== 'function') {
+      return res.status(503).json({ ok: false, error: 'no_db' });
+    }
+    const operationId = req.params.id;
+    if (!db.getOperation(operationId)) {
+      return res.status(404).json({ ok: false, error: 'operation_not_found' });
+    }
+    const b = req.body || {};
+    const commit = !!(b.commit || b.execute || req.query.commit === '1' || req.query.commit === 'true');
+    const dryRun = b.dry_run != null ? !!b.dry_run : !commit;
+    try {
+      const out = runOperation(db, operationId, {
+        description: b.description,
+        commit,
+        dry_run: dryRun,
+        triggered_by: b.triggered_by || 'api',
+        rootsPath: b.rootsPath,
+        structurePath: b.structurePath,
+        outPath: b.outPath,
+      });
+      const code = out.ok ? 200 : 500;
+      return res.status(code).json(out);
+    } catch (e) {
+      logger.error('operation_run_error', { operation_id: operationId, name: e && e.name });
+      return res.status(500).json({ ok: false, error: 'operation_run_failed', detail: e && e.message });
     }
   });
 

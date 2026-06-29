@@ -47,6 +47,10 @@ class MemoryDB {
   }
 
   init() {
+    if (process.env.OMBRAIN_FORCE_JSON_BACKEND === '1') {
+      this._initJson();
+      return this;
+    }
     const Sqlite = tryLoadSqlite();
     if (Sqlite) {
       this._initSqlite(Sqlite);
@@ -65,8 +69,11 @@ class MemoryDB {
     this._ensureDir();
     this.sqlite = new Sqlite(this.dbPath);
     this.sqlite.pragma('journal_mode = WAL');
+    this.backend = 'sqlite';
     const schema = fs.readFileSync(SCHEMA_PATH, 'utf8');
     this.sqlite.exec(schema);
+    this._applyMigrations();
+    this.seedOperationRegistry();
     // Probe sqlite-vec (optional acceleration). The pure-JS path remains the
     // portable fallback regardless of this result.
     const probe = vec.probeSqliteVec();
@@ -83,13 +90,13 @@ class MemoryDB {
         this.vecAvailable = false;
       }
     }
-    this.backend = 'sqlite';
   }
 
   _initJson() {
     this._ensureDir();
     this.backend = 'json';
     this.vecAvailable = false;
+    this._memoryOnly = this.dbPath === ':memory:';
     const base = {
       doctrine_memory: [],
       system_truth_memory: [],
@@ -109,7 +116,9 @@ class MemoryDB {
       btw_queue: [],
       skill_memory: [],
       doc_registry: [],
-      _seq: { doctrine: 0, systruth: 0, event: 0, work: 0, decision: 0, approval: 0, apphist: 0, omaudit: 0, task: 0, knowledge: 0, procedure: 0, correction: 0, theology: 0, church: 0, btw: 0, skill: 0, doc: 0 },
+      operation_registry: [],
+      operation_runs: [],
+      _seq: { doctrine: 0, systruth: 0, event: 0, work: 0, decision: 0, approval: 0, apphist: 0, omaudit: 0, task: 0, knowledge: 0, procedure: 0, correction: 0, theology: 0, church: 0, btw: 0, skill: 0, doc: 0, operation: 0, operation_run: 0 },
     };
     if (fs.existsSync(this.dbPath + '.json')) {
       try {
@@ -120,10 +129,35 @@ class MemoryDB {
     } else {
       this.json = base;
     }
+    if (!this.json.operation_registry) this.json.operation_registry = [];
+    if (!this.json.operation_runs) this.json.operation_runs = [];
+    this.seedOperationRegistry();
+  }
+
+  _applyMigrations() {
+    if (this.backend !== 'sqlite' || !this.sqlite) return;
+    const migDir = path.resolve(__dirname, '..', '..', 'db', 'migrations');
+    if (!fs.existsSync(migDir)) return;
+    const files = fs.readdirSync(migDir).filter((f) => f.endsWith('.sql')).sort();
+    for (const file of files) {
+      try {
+        const sql = fs.readFileSync(path.join(migDir, file), 'utf8');
+        this.sqlite.exec(sql);
+      } catch (_) {
+        // idempotent CREATE IF NOT EXISTS
+      }
+    }
+  }
+
+  seedOperationRegistry() {
+    const { getBuiltinOperations } = require('../operations/registry');
+    for (const op of getBuiltinOperations()) {
+      this.upsertOperation(op);
+    }
   }
 
   _persistJson() {
-    if (this.backend === 'json') {
+    if (this.backend === 'json' && !this._memoryOnly) {
       fs.writeFileSync(this.dbPath + '.json', JSON.stringify(this.json, null, 2));
     }
   }
@@ -1590,6 +1624,121 @@ class MemoryDB {
     if (category) rows = rows.filter((r) => r.category === category);
     if (status) rows = rows.filter((r) => r.status === status);
     return rows.slice(0, limit);
+  }
+
+  upsertOperation({ id, title, description, handler_ref, script_ref, active }) {
+    const now = new Date().toISOString();
+    if (this.backend === 'sqlite') {
+      this.sqlite.prepare(
+        `INSERT INTO operation_registry (id, title, description, handler_ref, script_ref, active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET
+           title = excluded.title,
+           description = excluded.description,
+           handler_ref = excluded.handler_ref,
+           script_ref = excluded.script_ref,
+           active = excluded.active,
+           updated_at = datetime('now')`,
+      ).run(id, title, description, handler_ref, script_ref || null, active != null ? (active ? 1 : 0) : 1);
+      return id;
+    }
+    const idx = this.json.operation_registry.findIndex((r) => r.id === id);
+    const row = {
+      id, title, description, handler_ref,
+      script_ref: script_ref || null,
+      active: active != null ? (active ? 1 : 0) : 1,
+      created_at: idx >= 0 ? this.json.operation_registry[idx].created_at : now,
+      updated_at: now,
+    };
+    if (idx >= 0) this.json.operation_registry[idx] = row;
+    else this.json.operation_registry.push(row);
+    this._persistJson();
+    return id;
+  }
+
+  listOperations({ active } = {}) {
+    if (this.backend === 'sqlite') {
+      let sql = 'SELECT * FROM operation_registry';
+      const params = [];
+      if (active != null) { sql += ' WHERE active = ?'; params.push(active ? 1 : 0); }
+      sql += ' ORDER BY id';
+      return this.sqlite.prepare(sql).all(...params);
+    }
+    let rows = this.json.operation_registry.slice();
+    if (active != null) rows = rows.filter((r) => r.active === (active ? 1 : 0));
+    return rows.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  getOperation(id) {
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare('SELECT * FROM operation_registry WHERE id = ?').get(id) || null;
+    }
+    return this.json.operation_registry.find((r) => r.id === id) || null;
+  }
+
+  createOperationRun({ id, operation_id, description, status, triggered_by, params_json }) {
+    if (this.backend === 'sqlite') {
+      this.sqlite.prepare(
+        `INSERT INTO operation_runs (id, operation_id, description, status, triggered_by, params_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+      ).run(id, operation_id, description || null, status || 'pending', triggered_by || 'api', params_json || null);
+      return id;
+    }
+    const now = new Date().toISOString();
+    this.json.operation_runs.push({
+      id, operation_id, description: description || null,
+      status: status || 'pending', triggered_by: triggered_by || 'api',
+      params_json: params_json || null, started_at: null, finished_at: null,
+      exit_code: null, output_summary: null, created_at: now,
+    });
+    this._persistJson();
+    return id;
+  }
+
+  updateOperationRun(id, patch) {
+    if (this.backend === 'sqlite') {
+      const fields = [];
+      const params = [];
+      for (const key of ['description', 'status', 'started_at', 'finished_at', 'exit_code', 'output_summary', 'params_json']) {
+        if (patch[key] !== undefined) { fields.push(`${key} = ?`); params.push(patch[key]); }
+      }
+      if (!fields.length) return false;
+      params.push(id);
+      this.sqlite.prepare(`UPDATE operation_runs SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+      return true;
+    }
+    const idx = this.json.operation_runs.findIndex((r) => r.id === id);
+    if (idx < 0) return false;
+    Object.assign(this.json.operation_runs[idx], patch);
+    this._persistJson();
+    return true;
+  }
+
+  getOperationRun(id) {
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare('SELECT * FROM operation_runs WHERE id = ?').get(id) || null;
+    }
+    return this.json.operation_runs.find((r) => r.id === id) || null;
+  }
+
+  listOperationRuns({ operation_id, status, limit = 50 } = {}) {
+    const cap = Math.min(limit || 50, 500);
+    if (this.backend === 'sqlite') {
+      let sql = 'SELECT * FROM operation_runs';
+      const params = [];
+      const where = [];
+      if (operation_id) { where.push('operation_id = ?'); params.push(operation_id); }
+      if (status) { where.push('status = ?'); params.push(status); }
+      if (where.length) sql += ' WHERE ' + where.join(' AND ');
+      sql += ' ORDER BY COALESCE(started_at, created_at) DESC LIMIT ?';
+      params.push(cap);
+      return this.sqlite.prepare(sql).all(...params);
+    }
+    let rows = this.json.operation_runs.slice();
+    if (operation_id) rows = rows.filter((r) => r.operation_id === operation_id);
+    if (status) rows = rows.filter((r) => r.status === status);
+    rows.sort((a, b) => String(b.started_at || b.created_at).localeCompare(String(a.started_at || a.created_at)));
+    return rows.slice(0, cap);
   }
 
   close() {
