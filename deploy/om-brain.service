@@ -35,8 +35,9 @@ TimeoutStartSec=60
 # --- Filesystem hardening ---
 ProtectSystem=strict
 ProtectHome=yes
-# Only the SQLite memory dir and runtime are writable.
+# SQLite memory dir, runtime, and doc-registry inventory snapshots.
 ReadWritePaths=/var/lib/om-brain
+ReadWritePaths=/opt/om-brain/inventory
 StateDirectory=om-brain
 PrivateTmp=yes
 NoNewPrivileges=yes
