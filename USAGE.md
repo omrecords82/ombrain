@@ -43,7 +43,7 @@ Phrases like **find env files**, **.env locations**, or **fleet env scan** sugge
 ### Safety
 
 - Handlers must live under `scripts/fleet/handlers/`
-- SSH uses `BatchMode=yes`, 120s timeout, user `next` (override: `FLEET_SSH_USER`)
+- SSH uses `BatchMode=yes`, 120s timeout, user `next` (`FLEET_SSH_USER`), key at `FLEET_SSH_IDENTITY_FILE` (see [docs/FLEET-OPS.md](docs/FLEET-OPS.md))
 - Results redact accidental `KEY=value` lines
 
 See [docs/FLEET-OPS.md](docs/FLEET-OPS.md) for transport abstraction and future NATS swap.

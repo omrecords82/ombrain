@@ -8,6 +8,7 @@ const { ROOT } = require('../hosts');
 
 const ALLOWED_HANDLER_PREFIX = 'scripts/fleet/handlers/';
 const DEFAULT_SSH_USER = process.env.FLEET_SSH_USER || 'next';
+const DEFAULT_SSH_IDENTITY_FILE = process.env.FLEET_SSH_IDENTITY_FILE || '';
 const DEFAULT_TIMEOUT_MS = Number(process.env.FLEET_SSH_TIMEOUT_MS) || 120000;
 
 function assertAllowlistedHandler(handlerRef) {
@@ -49,9 +50,13 @@ function execute(hostConfig, handlerRef, env = {}) {
     '-o', 'BatchMode=yes',
     '-o', 'ConnectTimeout=30',
     '-o', 'StrictHostKeyChecking=accept-new',
-    remoteTarget,
-    'bash', '-s',
   ];
+  if (DEFAULT_SSH_IDENTITY_FILE) {
+    sshArgs.push('-i', DEFAULT_SSH_IDENTITY_FILE);
+    const knownHosts = path.join(path.dirname(DEFAULT_SSH_IDENTITY_FILE), 'known_hosts');
+    sshArgs.push('-o', `UserKnownHostsFile=${knownHosts}`);
+  }
+  sshArgs.push(remoteTarget, 'bash', '-s');
 
   const proc = spawnSync('ssh', sshArgs, {
     input: scriptContent,
@@ -98,6 +103,7 @@ function executeLocal(_hostConfig, handlerRef, env = {}) {
 module.exports = {
   ALLOWED_HANDLER_PREFIX,
   DEFAULT_SSH_USER,
+  DEFAULT_SSH_IDENTITY_FILE,
   DEFAULT_TIMEOUT_MS,
   assertAllowlistedHandler,
   execute,
