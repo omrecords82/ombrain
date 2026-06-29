@@ -108,7 +108,8 @@ class MemoryDB {
       church_memory: [],
       btw_queue: [],
       skill_memory: [],
-      _seq: { doctrine: 0, systruth: 0, event: 0, work: 0, decision: 0, approval: 0, apphist: 0, omaudit: 0, task: 0, knowledge: 0, procedure: 0, correction: 0, theology: 0, church: 0, btw: 0, skill: 0 },
+      doc_registry: [],
+      _seq: { doctrine: 0, systruth: 0, event: 0, work: 0, decision: 0, approval: 0, apphist: 0, omaudit: 0, task: 0, knowledge: 0, procedure: 0, correction: 0, theology: 0, church: 0, btw: 0, skill: 0, doc: 0 },
     };
     if (fs.existsSync(this.dbPath + '.json')) {
       try {
@@ -1489,6 +1490,106 @@ class MemoryDB {
       row.updated_at = ts;
       this._persistJson();
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Documentation registry
+  // -------------------------------------------------------------------------
+
+  upsertDocRegistry(entry) {
+    const crypto = require('crypto');
+    const id = entry.id || crypto.randomUUID();
+    const now = new Date().toISOString();
+    if (this.backend === 'sqlite') {
+      this.sqlite
+        .prepare(
+          `INSERT INTO doc_registry (id, path, repo, category, title, status, sha256, mtime,
+             last_scanned_at, notes, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+           ON CONFLICT(path, repo) DO UPDATE SET
+             category=excluded.category, title=excluded.title, status=excluded.status,
+             sha256=excluded.sha256, mtime=excluded.mtime, last_scanned_at=excluded.last_scanned_at,
+             notes=excluded.notes, updated_at=datetime('now')`,
+        )
+        .run(
+          id, entry.path, entry.repo, entry.category, entry.title || null,
+          entry.status || 'canonical', entry.sha256 || null, entry.mtime || null,
+          entry.last_scanned_at || now, entry.notes || null,
+        );
+      return id;
+    }
+    const idx = this.json.doc_registry.findIndex(
+      (r) => r.path === entry.path && r.repo === entry.repo,
+    );
+    const row = {
+      id,
+      path: entry.path,
+      repo: entry.repo,
+      category: entry.category,
+      title: entry.title || null,
+      status: entry.status || 'canonical',
+      sha256: entry.sha256 || null,
+      mtime: entry.mtime || null,
+      last_scanned_at: entry.last_scanned_at || now,
+      notes: entry.notes || null,
+      created_at: idx >= 0 ? this.json.doc_registry[idx].created_at : now,
+      updated_at: now,
+    };
+    if (idx >= 0) this.json.doc_registry[idx] = row;
+    else this.json.doc_registry.push(row);
+    this._persistJson();
+    return id;
+  }
+
+  replaceDocRegistry(entries, scannedAt) {
+    const ts = scannedAt || new Date().toISOString();
+    const crypto = require('crypto');
+    if (this.backend === 'sqlite') {
+      const tx = this.sqlite.transaction((rows) => {
+        this.sqlite.prepare('DELETE FROM doc_registry').run();
+        const ins = this.sqlite.prepare(
+          `INSERT INTO doc_registry (id, path, repo, category, title, status, sha256, mtime,
+             last_scanned_at, notes, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        );
+        for (const e of rows) {
+          ins.run(
+            crypto.randomUUID(), e.path, e.repo, e.category, e.title || null,
+            e.status, e.sha256 || null, e.mtime || null, e.last_scanned_at || ts, e.notes || null,
+          );
+        }
+      });
+      tx(entries);
+      return entries.length;
+    }
+    this.json.doc_registry = entries.map((e) => ({
+      id: crypto.randomUUID(),
+      ...e,
+      created_at: ts,
+      updated_at: ts,
+    }));
+    this._persistJson();
+    return entries.length;
+  }
+
+  listDocRegistry({ repo, category, status, limit = 500 } = {}) {
+    if (this.backend === 'sqlite') {
+      let sql = 'SELECT * FROM doc_registry';
+      const params = [];
+      const where = [];
+      if (repo) { where.push('repo = ?'); params.push(repo); }
+      if (category) { where.push('category = ?'); params.push(category); }
+      if (status) { where.push('status = ?'); params.push(status); }
+      if (where.length) sql += ' WHERE ' + where.join(' AND ');
+      sql += ' ORDER BY repo, path LIMIT ?';
+      params.push(limit);
+      return this.sqlite.prepare(sql).all(...params);
+    }
+    let rows = this.json.doc_registry.slice();
+    if (repo) rows = rows.filter((r) => r.repo === repo);
+    if (category) rows = rows.filter((r) => r.category === category);
+    if (status) rows = rows.filter((r) => r.status === status);
+    return rows.slice(0, limit);
   }
 
   close() {

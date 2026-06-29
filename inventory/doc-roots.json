@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "notes": "Declared doc scan roots on om-prod01 (.239). Regenerate DOC-SNAPSHOT.md via scan-doc-registry.js.",
+  "exclude_dir_names": [
+    "node_modules",
+    "dist",
+    "build",
+    ".git",
+    "vendor",
+    "coverage",
+    "exports",
+    "_intake"
+  ],
+  "exclude_path_globs": [
+    "server/storage",
+    ".git/objects"
+  ],
+  "roots": [
+    {
+      "repo": "omai",
+      "path": "/var/www/omai/docs",
+      "include_root_md": false
+    },
+    {
+      "repo": "omai",
+      "path": "/var/www/omai/om-brain",
+      "include_root_md": true,
+      "include_patterns": ["*.md", "deploy/*.md", "docs/*.md"]
+    },
+    {
+      "repo": "om",
+      "path": "/var/www/orthodoxmetrics/prod/docs",
+      "include_root_md": false
+    },
+    {
+      "repo": "om",
+      "path": "/var/www/orthodoxmetrics/prod",
+      "include_root_md": true,
+      "include_patterns": ["AGENTS.md", "CLAUDE.md", "ai-agent-workflow.md"]
+    },
+    {
+      "repo": "ops",
+      "path": "/var/omai-ops/docs",
+      "include_root_md": false
+    }
+  ]
+}

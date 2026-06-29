@@ -1129,6 +1129,62 @@ function createServer(deps = {}) {
   });
 
   // -------------------------------------------------------------------------
+  // Documentation registry — om-brain doc index (paths stay in repos)
+  // -------------------------------------------------------------------------
+
+  app.get('/brain/docs', (req, res) => {
+    if (!db || typeof db.listDocRegistry !== 'function') {
+      return res.status(503).json({ ok: false, error: 'no_db' });
+    }
+    const limit = Math.min(Number(req.query.limit) || 500, 2000);
+    const rows = db.listDocRegistry({
+      repo: req.query.repo,
+      category: req.query.category,
+      status: req.query.status,
+      limit,
+    });
+    return res.json({ count: rows.length, docs: rows });
+  });
+
+  app.get('/brain/docs/structure', (req, res) => {
+    try {
+      const { getStructure } = require('../docRegistry');
+      return res.json({ ok: true, structure: getStructure() });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: 'structure_load_failed' });
+    }
+  });
+
+  app.post('/brain/docs/scan', (req, res) => {
+    const { validateIngestAuth } = require('../ingest/platformEventIngest');
+    const secretCheck = validateIngestAuth(req.headers['x-om-webhook-secret']);
+    if (!secretCheck.ok) {
+      return res.status(401).json({ ok: false, error: secretCheck.reason });
+    }
+    if (!db || typeof db.replaceDocRegistry !== 'function') {
+      return res.status(503).json({ ok: false, error: 'no_db' });
+    }
+    const b = req.body || {};
+    const commit = !!(
+      b.commit || b.execute ||
+      req.query.commit === '1' || req.query.commit === 'true'
+    );
+    try {
+      const { runScan } = require('../docRegistry');
+      const result = runScan(commit ? db : null, { commit });
+      return res.json({
+        ok: true,
+        dry_run: !commit,
+        stats: result.stats,
+        snapshot_path: result.snapshotPath,
+      });
+    } catch (e) {
+      logger.error('doc_scan_error', { name: e && e.name });
+      return res.status(500).json({ ok: false, error: 'scan_failed', detail: e && e.message });
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // P0-3 — Unified ask endpoint (§9 modes router)
   //
   // POST /brain/ask

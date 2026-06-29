@@ -456,3 +456,26 @@ CREATE TABLE IF NOT EXISTS skill_memory (
 CREATE INDEX IF NOT EXISTS idx_skill_key ON skill_memory(skill_key);
 CREATE INDEX IF NOT EXISTS idx_skill_active ON skill_memory(active);
 CREATE INDEX IF NOT EXISTS idx_skill_language ON skill_memory(language);
+
+-- -----------------------------------------------------------------------------
+-- 17. doc_registry — om-brain documentation path index (truth map, not file store).
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS doc_registry (
+  id              TEXT PRIMARY KEY,
+  path            TEXT NOT NULL,
+  repo            TEXT NOT NULL,
+  category        TEXT NOT NULL,
+  title           TEXT,
+  status          TEXT NOT NULL DEFAULT 'canonical',
+  sha256          TEXT,
+  mtime           TEXT,
+  last_scanned_at TEXT NOT NULL,
+  notes           TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(path, repo)
+);
+CREATE INDEX IF NOT EXISTS idx_doc_registry_repo ON doc_registry(repo);
+CREATE INDEX IF NOT EXISTS idx_doc_registry_category ON doc_registry(category);
+CREATE INDEX IF NOT EXISTS idx_doc_registry_status ON doc_registry(status);
+CREATE INDEX IF NOT EXISTS idx_doc_registry_sha256 ON doc_registry(sha256);

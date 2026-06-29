@@ -11,3 +11,4 @@ data/
 *.db-shm
 npm-debug.log*
 .DS_Store
+.test-tmp/

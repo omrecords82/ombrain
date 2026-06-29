@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "owner": "om-brain",
+  "notes": "Canonical documentation tree om-brain recommends. Index-only — files remain in repos.",
+  "categories": [
+    {
+      "id": "platform",
+      "label": "Platform topology & boundaries",
+      "description": "Host maps, data model, cross-repo boundaries, architecture overviews."
+    },
+    {
+      "id": "operations",
+      "label": "Operations & deploy",
+      "description": "Runbooks, deploy scripts, env contracts, verification playbooks."
+    },
+    {
+      "id": "om-brain",
+      "label": "OM Brain",
+      "description": "Brain architecture, memory layers, skills, RAG, calendar, API surfaces."
+    },
+    {
+      "id": "coordination",
+      "label": "Agent coordination",
+      "description": "Handoffs, TODOs, multi-agent workflows, governance cross-links."
+    },
+    {
+      "id": "agents",
+      "label": "Agent contracts",
+      "description": "AGENTS.md, CLAUDE.md, IDE rules — summaries may live under docs/agents/."
+    },
+    {
+      "id": "archive",
+      "label": "Archive",
+      "description": "Dated snapshots, superseded handoffs, historical audits."
+    }
+  ],
+  "trees": {
+    "om": {
+      "hub_path": "/var/www/orthodoxmetrics/prod/docs",
+      "folders": [
+        "README.md",
+        "platform/",
+        "operations/",
+        "architecture/",
+        "features/",
+        "agents/",
+        "archive/"
+      ]
+    },
+    "omai": {
+      "hub_path": "/var/www/omai/docs",
+      "folders": [
+        "README.md",
+        "om-brain/",
+        "coordination/",
+        "governance/",
+        "operations/",
+        "deployment/",
+        "archive/"
+      ]
+    }
+  },
+  "path_rules": [
+    { "match": "/docs/om-brain/", "category": "om-brain", "repo": "omai" },
+    { "match": "/om-brain/", "category": "om-brain", "repo": "omai" },
+    { "match": "/docs/coordination/", "category": "coordination", "repo": "omai" },
+    { "match": "/docs/governance/", "category": "coordination", "repo": "omai" },
+    { "match": "/docs/operations/", "category": "operations", "repo": "omai" },
+    { "match": "/docs/deployment/", "category": "operations", "repo": "omai" },
+    { "match": "/docs/platform/", "category": "platform", "repo": "om" },
+    { "match": "/docs/operations/", "category": "operations", "repo": "om" },
+    { "match": "/docs/architecture/", "category": "platform", "repo": "om" },
+    { "match": "/docs/features/", "category": "platform", "repo": "om" },
+    { "match": "/docs/agents/", "category": "agents", "repo": "om" },
+    { "match": "/docs/archive/", "category": "archive", "repo": "om" },
+    { "match": "/archive/", "category": "archive" },
+    { "match": "/6-26-26/", "category": "archive" },
+    { "match": "/6-27-26/", "category": "archive" },
+    { "match": "AGENTS.md", "category": "agents" },
+    { "match": "CLAUDE.md", "category": "agents" }
+  ]
+}

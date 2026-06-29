@@ -4,6 +4,7 @@
 # Run on om-dev (.254) at end of deploy.sh (or via systemd timer).
 #
 # - collect-hosts.js → inventory/HOST-SNAPSHOT.md (must run ON om-dev for :8390 truth)
+# - scan-doc-registry.js → inventory/DOC-SNAPSHOT.md (run on om-prod01 .239 where doc roots live)
 # - dump-schema.js → db/SCHEMA-SNAPSHOT.md (when brain.db exists)
 #
 # Optional git commit when SNAPSHOT_GIT_REPO points at a checkout (e.g. /var/www/omai on .239).
