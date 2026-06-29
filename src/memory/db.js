@@ -74,6 +74,7 @@ class MemoryDB {
     this.sqlite.exec(schema);
     this._applyMigrations();
     this.seedOperationRegistry();
+    this.seedSkillRegistry();
     // Probe sqlite-vec (optional acceleration). The pure-JS path remains the
     // portable fallback regardless of this result.
     const probe = vec.probeSqliteVec();
@@ -134,6 +135,22 @@ class MemoryDB {
     if (!this.json.operation_runs) this.json.operation_runs = [];
     if (!this.json.operation_run_children) this.json.operation_run_children = [];
     this.seedOperationRegistry();
+    this.seedSkillRegistry();
+  }
+
+  seedSkillRegistry() {
+    const { getBuiltinSkills } = require('../skills/registry');
+    for (const skill of getBuiltinSkills()) {
+      const existing = this.getSkillByKey(skill.skill_key);
+      this.upsertSkill({
+        ...skill,
+        version: existing ? (existing.version || 1) + 1 : 1,
+        active: 1,
+      });
+    }
+    if (typeof this.deactivateSkill === 'function') {
+      this.deactivateSkill('bug-tracker-guide');
+    }
   }
 
   _applyMigrations() {

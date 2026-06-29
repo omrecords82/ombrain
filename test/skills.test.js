@@ -90,10 +90,10 @@ test('MemoryDB skill CRUD', () => {
   assert.strictEqual(row.language, 'bash');
 
   const listed = db.listSkills({ active: true });
-  assert.strictEqual(listed.length, 1);
+  assert.ok(listed.some((s) => s.skill_key === 'echo-test'));
 
   assert.strictEqual(db.deactivateSkill('echo-test'), true);
-  assert.strictEqual(db.listSkills({ active: true }).length, 0);
+  assert.ok(!db.listSkills({ active: true }).some((s) => s.skill_key === 'echo-test'));
 
   db.recordSkillRun('echo-test', { exit_code: 0 });
   const inactive = db.getSkillByKey('echo-test');
@@ -146,7 +146,8 @@ test('API skills CRUD + dry-run + unsafe rejected', async () => {
     assert.strictEqual(create.json.skill_key, 'echo-test');
 
     const list = await jsonFetch(`${srv.baseUrl}/brain/skills`);
-    assert.strictEqual(list.json.count, 1);
+    assert.ok(list.json.count >= 1);
+    assert.ok(list.json.skills.some((s) => s.skill_key === 'echo-test'));
 
     const get = await jsonFetch(`${srv.baseUrl}/brain/skills/echo-test`);
     assert.strictEqual(get.status, 200);

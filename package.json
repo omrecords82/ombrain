@@ -17,6 +17,7 @@
     "dump-schema": "node scripts/dump-schema.js",
     "collect-hosts": "node scripts/collect-hosts.js",
     "scan-doc-registry": "node scripts/scan-doc-registry.js",
+    "seed-procedure": "node scripts/seed-procedure.js",
     "validate-paschalion": "node scripts/validate-paschalion.js",
     "test": "node --test test/*.test.js",
     "lint": "node -e \"console.log('lint placeholder — no linter bundled')\""
