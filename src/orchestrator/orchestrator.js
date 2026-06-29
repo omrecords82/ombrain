@@ -256,6 +256,72 @@ class Orchestrator {
     };
   }
 
+  /**
+   * Resolve ops/technical status queries to OMAI brain-actions when configured.
+   * Read-only actions may execute without commit; writes require explicit commit.
+   */
+  async _tryResolveOpsAction(query, opts = {}) {
+    let actionBridge;
+    try {
+      actionBridge = require('../actions/actionBridge');
+    } catch (_) {
+      return null;
+    }
+    if (!actionBridge.isConfigured()) return null;
+
+    const q = String(query || '').trim();
+    const modeHint = opts.forceMode || opts.mode;
+    const looksOps = modeHint === 'ops' || modeHint === 'technical'
+      || /\b(status|health|fleet|system check|inventory)\b/i.test(q);
+    if (!looksOps) return null;
+
+    try {
+      const resolved = await actionBridge.resolveQuery(q);
+      if (!resolved || !resolved.matched || !resolved.action) return null;
+
+      const action = resolved.action;
+      const execute = !!(opts.execute || opts.commit);
+      const autoRunRead = !action.mutation && !execute && resolved.confidence >= 0.6;
+
+      if (autoRunRead || (execute && !action.mutation)) {
+        const out = await actionBridge.runAction(action.id, {
+          commit: !action.mutation || execute,
+          dry_run: false,
+        });
+        const summary = out.result?.fleet_health
+          ? `Fleet health ${out.result.fleet_health.score}% (${out.result.fleet_health.detail || 'ok'}).`
+          : out.result?.overall_ok != null
+            ? (out.result.overall_ok ? 'All probed services healthy.' : 'One or more services unhealthy.')
+            : 'Action completed.';
+        return {
+          mode: 'ops',
+          answer: `${action.title}: ${summary}`,
+          detail: { type: 'ops.action_result', action_id: action.id, result: out },
+        };
+      }
+
+      return {
+        mode: 'ops',
+        answer:
+          `Matched OMAI action \`${action.id}\` (${action.title}). ` +
+          (action.mutation
+            ? 'This action mutates state — run with `ombrain actions run ' + action.id + ' --commit`.'
+            : 'Run with `ombrain actions run ' + action.id + '` or pass execute:true on /brain/ask.'),
+        detail: { type: 'ops.action_advisory', action, confidence: resolved.confidence },
+      };
+    } catch (err) {
+      if (err.statusCode === 403 || err.code === 'access_denied') {
+        return {
+          mode: 'ops',
+          answer: 'Access denied for the requested operational action.',
+          detail: { type: 'ops.action_denied', error: 'access_denied' },
+        };
+      }
+      logger.warn('ask_action_resolve_error', { name: err && err.name });
+      return null;
+    }
+  }
+
   async _retrieveFromMemory(queryText, owningSystem) {
     if (!this.db || !config.learning.enabled) {
       return { hit: false, source: 'learning_disabled', content: null, procedure: null };
@@ -434,6 +500,11 @@ class Orchestrator {
     const skillIngest = this._tryIngestSkillFromQuery(q, opts);
     if (skillIngest) {
       return { session_id: sessionId, ...skillIngest };
+    }
+
+    const actionMatch = await this._tryResolveOpsAction(q, opts);
+    if (actionMatch) {
+      return { session_id: sessionId, ...actionMatch };
     }
 
     const { matchOperationIntent, runOperation, runFleetOperation } = require('../operations');

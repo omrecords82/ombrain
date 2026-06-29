@@ -136,6 +136,15 @@ const config = Object.freeze({
     outboxDir: env.OMSTUDIO_OUTBOX_DIR || './data/omstudio-outbox',
   },
 
+  // OMAI action bridge (ombrain actions * commands)
+  omai: {
+    apiBaseUrl: env.OMAI_API_BASE_URL || env.OM_API_BASE_URL || 'http://192.168.1.239:7060',
+    actionsPath: env.OMAI_ACTIONS_PATH || '/api/omai/brain-actions',
+    jwt: env.BRAIN_OPS_JWT || '',
+    serviceToken: env.OMSTUDIO_SERVICE_TOKEN || '',
+    timeoutMs: num(env.OMAI_ACTIONS_TIMEOUT_MS, 30000),
+  },
+
   // -------------------------------------------------------------------------
   // Auditor loop (Phase 3) — proactive cron-style platform scanner
   // -------------------------------------------------------------------------

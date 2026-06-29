@@ -133,6 +133,13 @@ function printHelp() {
   skills run <key> [--dry-run]        Preview run (default)
   skills run <key> --commit           Execute for real
 
+\x1b[33mActions (OMAI operational bridge):\x1b[0m
+  actions list [--source omai] [--category C] [--risk read|low|medium|high]
+  actions show <action_id>            Show action contract
+  actions run <action_id> [--input JSON] [--dry-run] [--commit] [--confirm]
+  actions resolve <query...>          Resolve natural language to action
+  actions history [--limit N]           Recent audited executions
+
 \x1b[33mOperations:\x1b[0m
   operations list                             List built-in operations
   operations run <id> [--host NAME] [--local]  Run operation (fleet: --host om-prod01)
@@ -666,6 +673,74 @@ async function cmdSkills(args) {
 }
 
 // ---------------------------------------------------------------------------
+// Actions commands (OMAI operational bridge)
+// ---------------------------------------------------------------------------
+
+async function cmdActions(args) {
+  const actionBridge = require(path.join(root, 'src/actions/actionBridge'));
+  const flags = {};
+  const positional = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--source' && args[i + 1]) flags.source = args[++i];
+    else if (args[i] === '--category' && args[i + 1]) flags.category = args[++i];
+    else if (args[i] === '--risk' && args[i + 1]) flags.risk = args[++i];
+    else if (args[i] === '--limit' && args[i + 1]) flags.limit = Number(args[++i]);
+    else if (args[i] === '--input' && args[i + 1]) flags.input = args[++i];
+    else if (args[i] === '--dry-run') flags.dryRun = true;
+    else if (args[i] === '--commit') flags.commit = true;
+    else if (args[i] === '--confirm') flags.confirm = true;
+    else positional.push(args[i]);
+  }
+  const [sub, ...rest] = positional;
+
+  if (!actionBridge.isConfigured()) {
+    printError('OMAI actions not configured — set BRAIN_OPS_JWT or OMSTUDIO_SERVICE_TOKEN and OMAI_API_BASE_URL');
+    return;
+  }
+
+  try {
+    if (sub === 'list') {
+      const data = await actionBridge.listActions({
+        source: flags.source,
+        category: flags.category,
+        risk: flags.risk,
+      });
+      printJSON(data);
+    } else if (sub === 'show') {
+      const id = rest[0];
+      if (!id) printError('Usage: actions show <action_id>');
+      printJSON(await actionBridge.showAction(id));
+    } else if (sub === 'resolve') {
+      if (rest.length === 0) printError('Usage: actions resolve <query...>');
+      printJSON(await actionBridge.resolveQuery(rest.join(' ')));
+    } else if (sub === 'history') {
+      printJSON(await actionBridge.history(flags.limit || 50));
+    } else if (sub === 'run') {
+      const id = rest[0];
+      if (!id) printError('Usage: actions run <action_id> [--input JSON] [--dry-run|--commit]');
+      let input;
+      if (flags.input) {
+        try { input = JSON.parse(flags.input); }
+        catch (e) { printError(`Invalid --input JSON: ${e.message}`); return; }
+      }
+      const commit = flags.commit && !flags.dryRun;
+      printJSON(await actionBridge.runAction(id, {
+        input,
+        commit: !!flags.commit,
+        dry_run: flags.dryRun ? true : undefined,
+        confirmed: !!flags.confirm,
+      }));
+    } else {
+      printError(`Unknown actions subcommand: ${sub}. Use: list, show, run, resolve, history`);
+    }
+  } catch (err) {
+    if (err.statusCode === 403) printError('Access denied — insufficient permissions for this action');
+    else if (err.statusCode === 428) printError(`${err.message} (pass --confirm)`);
+    else printError(err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Operations commands
 // ---------------------------------------------------------------------------
 
@@ -793,6 +868,7 @@ async function main() {
     else if (cmd === 'knowledge')  await cmdKnowledge(args);
     else if (cmd === 'tasks')      await cmdTasks(args);
     else if (cmd === 'skills')     await cmdSkills(args);
+    else if (cmd === 'actions')    await cmdActions(args);
     else if (cmd === 'operations') await cmdOperations(args);
     else if (cmd === 'workshop')   await cmdWorkshop(args);
     else { printHelp(); printError(`Unknown command: ${cmd}`); }

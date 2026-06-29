@@ -50,6 +50,8 @@ test('--help documents topology + server commands', async () => {
   assert.match(r.stdout, /Topology:/);
   assert.match(r.stdout, /server add <name> <host>/);
   assert.match(r.stdout, /set-master/);
+  assert.match(r.stdout, /skill\|skills add/);
+  assert.match(r.stdout, /action\|actions list/);
   assert.match(r.stdout, /--json/);
 });
 
@@ -201,6 +203,238 @@ test('server status reports reachable/unreachable per server', async () => {
     const backup = j.topology_status.find((x) => x.role === 'backup');
     assert.strictEqual(master.reachable, false);
     assert.strictEqual(backup.reachable, true);
+  } finally {
+    s.close();
+  }
+});
+
+// ---- Skills (HTTP /brain/skills) -------------------------------------------
+
+function skillsStub(state) {
+  const s = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    const url = new URL(req.url, 'http://127.0.0.1');
+    if (req.method === 'GET' && url.pathname === '/brain/skills') {
+      const skills = [...state.values()];
+      return res.end(JSON.stringify({ count: skills.length, skills }));
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/brain/skills/')) {
+      const key = decodeURIComponent(url.pathname.slice('/brain/skills/'.length));
+      const skill = state.get(key);
+      if (!skill) return res.writeHead(404).end(JSON.stringify({ ok: false, error: 'skill_not_found' }));
+      return res.end(JSON.stringify({ skill }));
+    }
+    if (req.method === 'POST' && url.pathname === '/brain/skills') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        const b = JSON.parse(body || '{}');
+        if (String(b.script || '').includes('rm -rf')) {
+          return res.writeHead(400).end(JSON.stringify({ ok: false, error: 'unsafe_script', details: ['rm -rf blocked'] }));
+        }
+        const skill_key = b.key;
+        const existing = state.get(skill_key);
+        const version = (existing?.version || 0) + 1;
+        const row = {
+          skill_key,
+          title: b.title || skill_key,
+          language: b.language,
+          script_body: b.script,
+          version,
+          run_count: 0,
+        };
+        state.set(skill_key, row);
+        res.writeHead(existing ? 200 : 201);
+        res.end(JSON.stringify({ ok: true, skill_key, version: row.version }));
+      });
+      return;
+    }
+    if (req.method === 'POST' && url.pathname.endsWith('/run')) {
+      const key = decodeURIComponent(url.pathname.slice('/brain/skills/'.length, -'/run'.length));
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        const b = JSON.parse(body || '{}');
+        const execute = !!b.execute;
+        res.end(JSON.stringify({
+          ok: true,
+          skill_key: key,
+          dry_run: !execute,
+          executed: execute,
+          exit_code: execute ? 0 : undefined,
+        }));
+      });
+      return;
+    }
+    res.writeHead(404).end(JSON.stringify({ ok: false, error: 'not_found' }));
+  });
+  return new Promise((resolve) => s.listen(0, '127.0.0.1', () => resolve(s)));
+}
+
+test('skill add/list/show/run via HTTP API', async () => {
+  const state = new Map();
+  const s = await skillsStub(state);
+  const p = s.address().port;
+  const tmpScript = path.join(os.tmpdir(), `ombrain-skill-${process.pid}.sh`);
+  fs.writeFileSync(tmpScript, '#!/bin/bash\necho hello\n');
+  try {
+    const url = `http://127.0.0.1:${p}`;
+    let r = await run(['skill', 'add', '--file', tmpScript, '--key', 'echo-test'], { OMBRAIN_URL: url });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /Skill saved.*echo-test/);
+
+    r = await run(['skills', 'list'], { OMBRAIN_URL: url });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /echo-test/);
+
+    r = await run(['skill', 'show', 'echo-test'], { OMBRAIN_URL: url });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /echo-test/);
+    assert.match(r.stdout, /echo hello/);
+
+    r = await run(['skills', 'run', 'echo-test'], { OMBRAIN_URL: url });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /dry-run/i);
+
+    r = await run(['skill', 'run', 'echo-test', '--commit'], { OMBRAIN_URL: url });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /executed/);
+  } finally {
+    fs.unlinkSync(tmpScript);
+    s.close();
+  }
+});
+
+test('skill add rejects unsafe script from API', async () => {
+  const state = new Map();
+  const s = await skillsStub(state);
+  const p = s.address().port;
+  const bad = path.join(os.tmpdir(), `ombrain-bad-${process.pid}.sh`);
+  fs.writeFileSync(bad, 'rm -rf /');
+  try {
+    const r = await run(['skills', 'add', '--file', bad, '--key', 'bad'], { OMBRAIN_URL: `http://127.0.0.1:${p}` });
+    assert.strictEqual(r.code, 2);
+    assert.match(r.stderr, /unsafe_script/);
+  } finally {
+    fs.unlinkSync(bad);
+    s.close();
+  }
+});
+
+// ---- Actions (HTTP /brain/actions) -----------------------------------------
+
+function actionsStub() {
+  const history = [];
+  const actions = [
+    {
+      id: 'omai.system.status',
+      source: 'omai',
+      category: 'system',
+      title: 'Full system status',
+      risk: 'read',
+      mutation: false,
+      supports_dry_run: true,
+    },
+    {
+      id: 'omai.services.health_check',
+      source: 'omai',
+      category: 'services',
+      title: 'Service health check',
+      risk: 'read',
+      mutation: false,
+      supports_dry_run: true,
+    },
+  ];
+  const s = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    const url = new URL(req.url, 'http://127.0.0.1');
+    if (req.method === 'GET' && url.pathname === '/brain/actions') {
+      return res.end(JSON.stringify({ ok: true, count: actions.length, actions }));
+    }
+    if (req.method === 'GET' && url.pathname === '/brain/actions/history') {
+      return res.end(JSON.stringify({ ok: true, count: history.length, history }));
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/brain/actions/')) {
+      const id = decodeURIComponent(url.pathname.slice('/brain/actions/'.length));
+      const action = actions.find((a) => a.id === id);
+      if (!action) return res.writeHead(404).end(JSON.stringify({ ok: false, error: 'action_not_found' }));
+      return res.end(JSON.stringify({ ok: true, action }));
+    }
+    if (req.method === 'POST' && url.pathname === '/brain/actions/resolve') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        const b = JSON.parse(body || '{}');
+        const q = String(b.query || '').toLowerCase();
+        const action = q.includes('health') ? actions[1] : actions[0];
+        res.end(JSON.stringify({ ok: true, matched: true, action, confidence: 0.9, matched_query: q }));
+      });
+      return;
+    }
+    if (req.method === 'POST' && url.pathname.endsWith('/run')) {
+      const id = decodeURIComponent(url.pathname.slice('/brain/actions/'.length, -'/run'.length));
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        const b = JSON.parse(body || '{}');
+        const dry_run = b.dry_run === true;
+        const record = { action_id: id, dry_run, committed: !dry_run, result: dry_run ? 'dry_run' : 'success' };
+        history.unshift(record);
+        if (dry_run) {
+          return res.end(JSON.stringify({ ok: true, action_id: id, dry_run: true, committed: false, preview: { would_run: id } }));
+        }
+        res.end(JSON.stringify({
+          ok: true,
+          action_id: id,
+          dry_run: false,
+          committed: true,
+          result: { fleet_health: { score: 95, detail: 'ok' } },
+        }));
+      });
+      return;
+    }
+    res.writeHead(404).end(JSON.stringify({ ok: false, error: 'not_found' }));
+  });
+  return new Promise((resolve) => s.listen(0, '127.0.0.1', () => resolve(s)));
+}
+
+test('actions list/show/run/resolve/history via HTTP API', async () => {
+  const s = await actionsStub();
+  const p = s.address().port;
+  const url = `http://127.0.0.1:${p}`;
+  try {
+    let r = await run(['actions', 'list'], { OMBRAIN_URL: url });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /omai\.system\.status/);
+
+    r = await run(['action', 'show', 'omai.system.status'], { OMBRAIN_URL: url });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /Full system status/);
+
+    r = await run(['actions', 'run', 'omai.system.status'], { OMBRAIN_URL: url });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /fleet 95%/i);
+
+    r = await run(['actions', 'resolve', 'check full system status'], { OMBRAIN_URL: url });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /omai\.system\.status/);
+
+    r = await run(['actions', 'history'], { OMBRAIN_URL: url });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /omai\.system\.status/);
+  } finally {
+    s.close();
+  }
+});
+
+test('skills list still works alongside actions stub', async () => {
+  const state = new Map();
+  const s = await skillsStub(state);
+  const p = s.address().port;
+  try {
+    const r = await run(['skills', 'list'], { OMBRAIN_URL: `http://127.0.0.1:${p}` });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /No active skills|Skills/);
   } finally {
     s.close();
   }

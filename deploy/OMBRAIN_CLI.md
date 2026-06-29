@@ -135,6 +135,19 @@ Theology / Church / Session
   ombrain church find <lat> <lng> [miles] | jurisdictions
   ombrain session <id>
 
+Actions (OMAI operational bridge — HTTP to /brain/actions)
+  ombrain action|actions list [--source omai] [--category C] [--risk read|low|medium|high]
+  ombrain action|actions show <action_id>
+  ombrain action|actions run <action_id> [--input JSON|--file path] [--dry-run] [--commit] [--confirm]
+  ombrain action|actions resolve <query...>
+  ombrain action|actions history [--limit N]
+
+Skills (executable scripts — HTTP to /brain/skills)
+  ombrain skill|skills list
+  ombrain skill|skills show <key>
+  ombrain skill|skills add --file <path> [--key K] [--language bash|python|node]
+  ombrain skill|skills run <key> [--dry-run] [--commit]
+
 Servers (registry / topology)
   ombrain server list | add | set-master | ports | remove | status
 ```
@@ -159,6 +172,11 @@ ombrain ask "fleet health status"        # mode: technical + answer text
 ombrain ask "restart nginx" --mode ops    # routed to governance, not executed
 ombrain --url http://127.0.0.1:60000 health   # one explicit port, no failover
 ombrain --server backup1 health           # target one named host's pool
+ombrain skill add --file ./scripts/hello.sh --key echo-test
+ombrain skills run echo-test --commit
+ombrain actions list
+ombrain actions run omai.system.status
+ombrain actions resolve "check full system status"
 ```
 
 ---

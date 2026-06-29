@@ -523,6 +523,109 @@ function createServer(deps = {}) {
   });
 
   // -------------------------------------------------------------------------
+  // OMAI Action bridge (ombrain actions * — separate from skills)
+  // -------------------------------------------------------------------------
+
+  const actionBridge = require('../actions/actionBridge');
+
+  function actionError(res, err) {
+    const code = err.statusCode || 500;
+    const payload = {
+      ok: false,
+      error: err.code || err.message,
+      message: err.message,
+    };
+    if (code === 403) payload.hint = 'access_denied';
+    return res.status(code).json(payload);
+  }
+
+  app.get('/brain/actions', async (req, res) => {
+    try {
+      if (!actionBridge.isConfigured()) {
+        return res.status(503).json({ ok: false, error: 'omai_actions_not_configured' });
+      }
+      const data = await actionBridge.listActions({
+        source: req.query.source,
+        category: req.query.category,
+        risk: req.query.risk,
+      });
+      return res.json(redactForLog(data));
+    } catch (e) {
+      logger.error('brain_actions_list_error', { name: e && e.name });
+      return actionError(res, e);
+    }
+  });
+
+  app.get('/brain/actions/history', async (req, res) => {
+    try {
+      if (!actionBridge.isConfigured()) {
+        return res.status(503).json({ ok: false, error: 'omai_actions_not_configured' });
+      }
+      const data = await actionBridge.history(req.query.limit);
+      return res.json(redactForLog(data));
+    } catch (e) {
+      logger.error('brain_actions_history_error', { name: e && e.name });
+      return actionError(res, e);
+    }
+  });
+
+  app.post('/brain/actions/resolve', async (req, res) => {
+    try {
+      if (!actionBridge.isConfigured()) {
+        return res.status(503).json({ ok: false, error: 'omai_actions_not_configured' });
+      }
+      const query = (req.body && (req.body.query || req.body.q)) || '';
+      if (!String(query).trim()) {
+        return res.status(400).json({ ok: false, error: 'query_required' });
+      }
+      const data = await actionBridge.resolveQuery(String(query).trim());
+      return res.json(redactForLog(data));
+    } catch (e) {
+      logger.error('brain_actions_resolve_error', { name: e && e.name });
+      return actionError(res, e);
+    }
+  });
+
+  app.get('/brain/actions/:id', async (req, res) => {
+    try {
+      if (req.params.id === 'history') return res.status(404).json({ ok: false, error: 'not_found' });
+      if (!actionBridge.isConfigured()) {
+        return res.status(503).json({ ok: false, error: 'omai_actions_not_configured' });
+      }
+      const data = await actionBridge.showAction(req.params.id);
+      return res.json(redactForLog(data));
+    } catch (e) {
+      logger.error('brain_actions_show_error', { name: e && e.name });
+      return actionError(res, e);
+    }
+  });
+
+  app.post('/brain/actions/:id/run', async (req, res) => {
+    try {
+      if (!actionBridge.isConfigured()) {
+        return res.status(503).json({ ok: false, error: 'omai_actions_not_configured' });
+      }
+      const b = req.body || {};
+      let input = b.input;
+      if (typeof input === 'string') {
+        try { input = JSON.parse(input); } catch (_) {
+          return res.status(400).json({ ok: false, error: 'invalid_input_json' });
+        }
+      }
+      const data = await actionBridge.runAction(req.params.id, {
+        input,
+        dry_run: b.dry_run,
+        commit: !!(b.commit || req.query.commit === '1' || req.query.commit === 'true'),
+        confirmed: !!(b.confirmed || b.confirm),
+      });
+      return res.json(redactForLog(data));
+    } catch (e) {
+      logger.error('brain_actions_run_error', { action_id: req.params.id, name: e && e.name });
+      return actionError(res, e);
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // Phase 2 — Correction memory
   // -------------------------------------------------------------------------
 

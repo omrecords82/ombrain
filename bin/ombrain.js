@@ -256,6 +256,117 @@ function formatChurchFind(b) {
   return lines.join('\n');
 }
 
+function formatSkillsList(b) {
+  const rows = b.skills || [];
+  if (!rows.length) return 'No active skills.';
+  const lines = [`${bold('Skills')} (${b.count != null ? b.count : rows.length})`, ''];
+  for (const s of rows) {
+    lines.push(`  ${cyan(String(s.skill_key).padEnd(32))} [${s.language}] v${s.version || 1} runs=${s.run_count || 0}`);
+    if (s.title) lines.push(`    ${s.title}`);
+  }
+  return lines.join('\n');
+}
+
+function formatSkillDetail(b) {
+  const s = b.skill || b;
+  if (!s || !s.skill_key) return formatGeneric(b);
+  const lines = [
+    `${bold(s.skill_key)}  [${s.language}] v${s.version || 1}`,
+    s.title ? `title: ${s.title}` : null,
+    s.description ? `description: ${s.description}` : null,
+    '',
+    s.script_body || '(no script body)',
+  ].filter((x) => x != null);
+  return lines.join('\n');
+}
+
+function formatSkillRun(b) {
+  if (b.dry_run) return `${yellow('dry-run')} — would execute ${b.skill_key || 'skill'} (${b.language || '?'})`;
+  if (b.executed) {
+    const code = b.exit_code != null ? b.exit_code : '?';
+    const status = b.exit_code === 0 ? green('ok') : red('failed');
+    return `executed ${b.skill_key || 'skill'} — exit ${code} ${status}`;
+  }
+  return formatGeneric(b);
+}
+
+function formatActionsList(b) {
+  const rows = b.actions || [];
+  if (!rows.length) return 'No actions registered.';
+  const lines = [`${bold('Actions')} (${b.count != null ? b.count : rows.length})`, ''];
+  for (const a of rows) {
+    lines.push(`  ${cyan(String(a.id).padEnd(36))} [${a.risk}] ${a.title || ''}`);
+    if (a.category) lines.push(`    ${dim(a.category)} · ${a.source || 'omai'}`);
+  }
+  return lines.join('\n');
+}
+
+function formatActionDetail(b) {
+  const a = b.action || b;
+  if (!a || !a.id) return formatGeneric(b);
+  const lines = [
+    `${bold(a.id)}  [${a.risk}]`,
+    a.title ? `title: ${a.title}` : null,
+    a.description ? `description: ${a.description}` : null,
+    a.mutation != null ? `mutation: ${a.mutation}` : null,
+    a.supports_dry_run != null ? `supports_dry_run: ${a.supports_dry_run}` : null,
+    a.required_roles ? `roles: ${a.required_roles.join(', ')}` : null,
+  ].filter((x) => x != null);
+  return lines.join('\n');
+}
+
+function formatActionRun(b) {
+  if (b.dry_run) {
+    return `${yellow('dry-run')} — would run ${b.action_id || 'action'}`;
+  }
+  if (b.committed && b.result) {
+    const summary = b.result.overall_ok != null
+      ? (b.result.overall_ok ? green('healthy') : red('unhealthy'))
+      : (b.result.fleet_health ? `fleet ${b.result.fleet_health.score}%` : green('ok'));
+    return `executed ${b.action_id || 'action'} — ${summary}`;
+  }
+  return formatGeneric(b);
+}
+
+function formatActionResolve(b) {
+  if (!b.matched) return `No action matched for: ${b.query || b.matched_query || ''}`;
+  const a = b.action || {};
+  return [
+    `${bold('matched')}: ${cyan(a.id || '?')}`,
+    a.title ? `title: ${a.title}` : null,
+    b.confidence != null ? `confidence: ${b.confidence}` : null,
+  ].filter(Boolean).join('\n');
+}
+
+function formatActionHistory(b) {
+  const rows = b.history || [];
+  if (!rows.length) return 'No action executions recorded.';
+  const lines = [`${bold('Action history')} (${b.count != null ? b.count : rows.length})`, ''];
+  for (const h of rows.slice(0, 20)) {
+    const id = h.action_id || h.entity_id || h.action || '?';
+    const when = h.created_at || h.executed_at || '';
+    lines.push(`  ${when}  ${cyan(String(id))}  ${h.details?.result || h.result || ''}`);
+  }
+  return lines.join('\n');
+}
+
+function inferLanguageFromPath(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.sh' || ext === '.bash') return 'bash';
+  if (ext === '.py') return 'python';
+  if (ext === '.js' || ext === '.mjs') return 'node';
+  return null;
+}
+
+function httpErrorMessage(status, body) {
+  const parts = [`${status}`];
+  if (body && body.error) parts.push(String(body.error));
+  if (body && Array.isArray(body.details)) parts.push(body.details.join(', '));
+  if (body && Array.isArray(body.allowed)) parts.push(`allowed: ${body.allowed.join(', ')}`);
+  if (body && body.hint) parts.push(`(${body.hint})`);
+  return parts.join(' ').trim();
+}
+
 function formatServerList(data) {
   const lines = [`registry: ${data.registry}`, ''];
   if (!data.servers || !data.servers.length) return lines.concat('(no servers registered)').join('\n');
@@ -543,6 +654,29 @@ function parseArgs(argv) {
     else if (a === '--timeout') { flags.timeout = parseInt(argv[++i], 10); }
     else if (a === '--session') { flags.session = argv[++i]; }
     else if (a === '--mode') { flags.mode = argv[++i]; }
+    else if (a === '--file') { flags.file = argv[++i]; }
+    else if (a.startsWith('--file=')) { flags.file = a.slice(7); }
+    else if (a === '--key') { flags.key = argv[++i]; }
+    else if (a.startsWith('--key=')) { flags.key = a.slice(6); }
+    else if (a === '--language') { flags.language = argv[++i]; }
+    else if (a.startsWith('--language=')) { flags.language = a.slice(11); }
+    else if (a === '--title') { flags.title = argv[++i]; }
+    else if (a === '--description') { flags.description = argv[++i]; }
+    else if (a === '--tags') { flags.tags = argv[++i]; }
+    else if (a === '--script') { flags.script = argv[++i]; }
+    else if (a === '--commit') { flags.commit = true; }
+    else if (a === '--dry-run') { flags.dryRun = true; }
+    else if (a === '--confirm') { flags.confirm = true; }
+    else if (a === '--source') { flags.source = argv[++i]; }
+    else if (a.startsWith('--source=')) { flags.source = a.slice(9); }
+    else if (a === '--category') { flags.category = argv[++i]; }
+    else if (a.startsWith('--category=')) { flags.category = a.slice(11); }
+    else if (a === '--risk') { flags.risk = argv[++i]; }
+    else if (a.startsWith('--risk=')) { flags.risk = a.slice(7); }
+    else if (a === '--limit') { flags.limit = parseInt(argv[++i], 10); }
+    else if (a.startsWith('--limit=')) { flags.limit = parseInt(a.slice(8), 10); }
+    else if (a === '--input') { flags.input = argv[++i]; }
+    else if (a.startsWith('--input=')) { flags.input = a.slice(8); }
     else if (a === '-h' || a === '--help') { flags.help = true; }
     else if (a === '-v' || a === '--version') { flags.version = true; }
     else { positional.push(a); }
@@ -731,6 +865,21 @@ ${yellow('Knowledge / church / session:')}
   church find <lat> <lng> [miles] | church jurisdictions
   session <id> | modes
 
+${yellow('Actions (OMAI operational bridge):')}
+  action|actions list [--source omai] [--category C] [--risk read|low|medium|high]
+  action|actions show <action_id>
+  action|actions run <action_id> [--input JSON|--file path] [--dry-run] [--commit] [--confirm]
+  action|actions resolve <query...>
+  action|actions history [--limit N]
+
+${yellow('Skills (executable scripts):')}
+  skill|skills list                              List active skills
+  skill|skills show <key>                        Show one skill (+ script body)
+  skill|skills add --file <path> [--key K]       Register from a script file
+                   [--language bash|python|node] [--title T] [--description D]
+                   [--tags a,b]  OR  --script '...'
+  skill|skills run <key> [--dry-run] [--commit]  Dry-run default; --commit executes
+
 ${yellow('Examples:')}
   ombrain server add master 192.168.1.254 --ports 60000-62000 --role master
   ombrain server add backup1 192.168.1.239 --ports 60000-62000 --role backup
@@ -738,7 +887,152 @@ ${yellow('Examples:')}
   ombrain pascha 2026
   ombrain ask "what is theosis" --session demo-1
   ombrain --url http://127.0.0.1:60000 health
+  ombrain skill add --file ./scripts/hello.sh --key echo-test
+  ombrain skills run echo-test --commit
+  ombrain actions list
+  ombrain actions run omai.system.status
 `);
+}
+
+// ---------------------------------------------------------------------------
+// Actions — HTTP client for /brain/actions (OMAI operational bridge)
+// ---------------------------------------------------------------------------
+async function cmdActions(rest, flags, opts) {
+  const sub = rest[0];
+  const tail = rest.slice(1);
+
+  const get = async (p, formatter) => {
+    const { status, body } = await topoRequest('GET', p, null, opts);
+    if (status === 403) die('access denied — insufficient permissions for this action', 2);
+    if (status >= 400) die(httpErrorMessage(status, body), 2);
+    emit(flags, body, formatter);
+  };
+  const post = async (p, payload, formatter) => {
+    const { status, body } = await topoRequest('POST', p, payload, opts);
+    if (status === 403) die('access denied — insufficient permissions for this action', 2);
+    if (status === 428) die(`${body && body.message ? body.message : 'confirmation required'} (pass --confirm)`, 2);
+    if (status >= 400) die(httpErrorMessage(status, body), 2);
+    emit(flags, body, formatter);
+  };
+
+  if (sub === 'list' || sub === undefined) {
+    const q = qs({ source: flags.source, category: flags.category, risk: flags.risk });
+    return get(`/brain/actions${q}`, formatActionsList);
+  }
+
+  if (sub === 'show') {
+    const id = tail[0];
+    if (!id) die('usage: ombrain action show <action_id>');
+    return get(`/brain/actions/${encodeURIComponent(id)}`, formatActionDetail);
+  }
+
+  if (sub === 'resolve') {
+    if (tail.length === 0) die('usage: ombrain action resolve <query...>');
+    return post('/brain/actions/resolve', { query: tail.join(' ') }, formatActionResolve);
+  }
+
+  if (sub === 'history') {
+    const q = qs({ limit: flags.limit });
+    return get(`/brain/actions/history${q}`, formatActionHistory);
+  }
+
+  if (sub === 'run') {
+    const id = tail[0];
+    if (!id) die('usage: ombrain action run <action_id> [--input JSON|--file path] [--dry-run|--commit]');
+    let input;
+    if (flags.input) {
+      try { input = JSON.parse(flags.input); }
+      catch (e) { die(`invalid --input JSON: ${e.message}`); }
+    } else if (flags.file) {
+      try { input = JSON.parse(fs.readFileSync(flags.file, 'utf8')); }
+      catch (e) { die(`could not read/parse --file ${flags.file}: ${e.message}`); }
+    }
+    const commit = flags.commit && !flags.dryRun;
+    return post(`/brain/actions/${encodeURIComponent(id)}/run`, {
+      input,
+      commit: !!flags.commit,
+      dry_run: flags.dryRun ? true : undefined,
+      confirmed: !!flags.confirm,
+    }, formatActionRun);
+  }
+
+  die(`unknown action subcommand: ${sub}\n` +
+    'try: list | show | run | resolve | history');
+}
+
+// ---------------------------------------------------------------------------
+// Skills — HTTP client for /brain/skills (mirrors bin/om-brain-cli.js skills *)
+// ---------------------------------------------------------------------------
+async function cmdSkills(rest, flags, opts) {
+  const sub = rest[0];
+  const tail = rest.slice(1);
+
+  const get = async (p, formatter) => {
+    const { status, body } = await topoRequest('GET', p, null, opts);
+    if (status >= 400) die(httpErrorMessage(status, body), 2);
+    emit(flags, body, formatter);
+  };
+  const post = async (p, payload, formatter) => {
+    const { status, body } = await topoRequest('POST', p, payload, opts);
+    if (status >= 400) die(httpErrorMessage(status, body), 2);
+    emit(flags, body, formatter);
+  };
+
+  if (sub === 'list' || sub === undefined) {
+    return get('/brain/skills', formatSkillsList);
+  }
+
+  if (sub === 'show') {
+    const key = tail[0];
+    if (!key) die('usage: ombrain skill show <key>');
+    return get(`/brain/skills/${encodeURIComponent(key)}`, formatSkillDetail);
+  }
+
+  if (sub === 'add') {
+    let script = flags.script;
+    if (!script && flags.file) {
+      try { script = fs.readFileSync(flags.file, 'utf8'); }
+      catch (e) { die(`could not read --file ${flags.file}: ${e.message}`); }
+    }
+    if (!script) {
+      die('usage: ombrain skill add --file <path> [--key K] [--language bash|python|node]\n' +
+          '   or: ombrain skill add --script \'...\' --key K --language bash');
+    }
+    const language = (flags.language || (flags.file ? inferLanguageFromPath(flags.file) : null) || '').toLowerCase();
+    if (!language) die('Could not infer language — pass --language bash|python|node');
+    const key = flags.key || (flags.file ? path.basename(flags.file, path.extname(flags.file)) : null);
+    if (!key) die('--key is required when using --script without --file');
+    const tags = flags.tags ? String(flags.tags).split(',').map((t) => t.trim()).filter(Boolean) : undefined;
+    const payload = {
+      key,
+      language,
+      script,
+      title: flags.title,
+      description: flags.description,
+      tags,
+    };
+    const { status, body } = await topoRequest('POST', '/brain/skills', payload, opts);
+    if (status >= 400) die(httpErrorMessage(status, body), 2);
+    if (body && body.warnings && body.warnings.length) {
+      note(`warning: ${body.warnings.join(', ')}`);
+    }
+    if (flags.json) {
+      emit(flags, body);
+      return;
+    }
+    out(green(`✓ Skill saved: ${body.skill_key} (${language}) v${body.version || 1}`));
+    return;
+  }
+
+  if (sub === 'run') {
+    const key = tail[0];
+    if (!key) die('usage: ombrain skill run <key> [--dry-run|--commit]');
+    const execute = flags.commit && !flags.dryRun;
+    return post(`/brain/skills/${encodeURIComponent(key)}/run`, { execute }, formatSkillRun);
+  }
+
+  die(`unknown skill subcommand: ${sub}\n` +
+    'try: list | show | add | run');
 }
 
 // ---------------------------------------------------------------------------
@@ -755,6 +1049,20 @@ async function main() {
 
   // Registry management is handled before any network resolution.
   if (cmd === 'server') return cmdServer(rest, flags);
+
+  // skill / skills — executable script registry (singular alias supported)
+  if (cmd === 'skill' || cmd === 'skills') {
+    const registry = loadRegistry();
+    const opts = resolveOpts(flags, registry);
+    return cmdSkills(rest, flags, opts);
+  }
+
+  // action / actions — OMAI operational bridge (separate from skills)
+  if (cmd === 'action' || cmd === 'actions') {
+    const registry = loadRegistry();
+    const opts = resolveOpts(flags, registry);
+    return cmdActions(rest, flags, opts);
+  }
 
   const registry = loadRegistry();
   const opts = resolveOpts(flags, registry);
