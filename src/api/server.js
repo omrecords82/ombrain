@@ -1226,18 +1226,48 @@ function createServer(deps = {}) {
     }
     const row = db.getOperationRun(req.params.run_id);
     if (!row) return res.status(404).json({ ok: false, error: 'run_not_found' });
-    return res.json({ run: row });
+    let children = [];
+    if (typeof db.listOperationRunChildren === 'function') {
+      children = db.listOperationRunChildren(req.params.run_id).map((c) => {
+        const child = { ...c };
+        if (child.result_json) {
+          try { child.result = JSON.parse(child.result_json); } catch (_) { /* keep raw */ }
+        }
+        return child;
+      });
+    }
+    return res.json({ run: row, children });
   });
 
-  app.post('/brain/operations/:id/run', (req, res) => {
+  app.post('/brain/operations/:id/run', async (req, res) => {
     if (!db || typeof db.createOperationRun !== 'function') {
       return res.status(503).json({ ok: false, error: 'no_db' });
     }
     const operationId = req.params.id;
-    if (!db.getOperation(operationId)) {
+    const op = db.getOperation(operationId);
+    if (!op) {
       return res.status(404).json({ ok: false, error: 'operation_not_found' });
     }
     const b = req.body || {};
+    const { runFleetOperation, isFleetOperation } = require('../operations/fleetRunner');
+
+    if (isFleetOperation(op)) {
+      try {
+        const out = await runFleetOperation(db, operationId, {
+          description: b.description,
+          targets: b.targets,
+          triggered_by: b.triggered_by || 'api',
+          local: !!(b.local || b.dry_run),
+          transport: b.transport,
+        });
+        const code = out.ok ? 200 : 500;
+        return res.status(code).json(out);
+      } catch (e) {
+        logger.error('fleet_operation_run_error', { operation_id: operationId, name: e && e.name });
+        return res.status(500).json({ ok: false, error: 'fleet_operation_run_failed', detail: e && e.message });
+      }
+    }
+
     const commit = !!(b.commit || b.execute || req.query.commit === '1' || req.query.commit === 'true');
     const dryRun = b.dry_run != null ? !!b.dry_run : !commit;
     try {

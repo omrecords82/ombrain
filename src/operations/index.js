@@ -2,6 +2,7 @@
 
 const { getBuiltinOperations, getBuiltinOperation, BUILTIN_OPERATIONS } = require('./registry');
 const { runOperation } = require('./runner');
+const { runFleetOperation, isFleetOperation } = require('./fleetRunner');
 const { matchOperationIntent } = require('./intent');
 
 module.exports = {
@@ -9,5 +10,7 @@ module.exports = {
   getBuiltinOperations,
   getBuiltinOperation,
   runOperation,
+  runFleetOperation,
+  isFleetOperation,
   matchOperationIntent,
 };

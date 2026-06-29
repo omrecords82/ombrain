@@ -134,9 +134,9 @@ function printHelp() {
   skills run <key> --commit           Execute for real
 
 \x1b[33mOperations:\x1b[0m
-  operations list                         List built-in operations
-  operations run <id> [--commit]          Run operation (dry-run default)
-  operations runs [--limit N] [--id ID]   Recent run history
+  operations list                             List built-in operations
+  operations run <id> [--host NAME] [--local]  Run operation (fleet: --host om-prod01)
+  operations runs [--limit N] [--id ID]       Recent run history
 
   help                                Show this help
 `);
@@ -668,12 +668,15 @@ async function cmdSkills(args) {
 
 async function cmdOperations(args) {
   const { runOperation } = require(path.join(root, 'src/operations/runner'));
+  const { runFleetOperation, isFleetOperation } = require(path.join(root, 'src/operations/fleetRunner'));
   const db = loadDB();
   const flags = {};
   const positional = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--commit') flags.commit = true;
     else if (args[i] === '--dry-run') flags.dryRun = true;
+    else if (args[i] === '--local') flags.local = true;
+    else if (args[i] === '--host' && args[i + 1]) flags.host = args[++i];
     else if (args[i] === '--limit' && args[i + 1]) flags.limit = Number(args[++i]);
     else if (args[i] === '--id' && args[i + 1]) flags.operationId = args[++i];
     else if (args[i] === '--description' && args[i + 1]) flags.description = args[++i];
@@ -686,22 +689,36 @@ async function cmdOperations(args) {
     if (rows.length === 0) { console.log('No operations registered.'); db.close(); return; }
     console.log(`\n\x1b[1mOperations (${rows.length})\x1b[0m\n`);
     for (const op of rows) {
-      console.log(`  \x1b[36m${op.id.padEnd(22)}\x1b[0m ${op.title}`);
+      console.log(`  \x1b[36m${op.id.padEnd(28)}\x1b[0m ${op.title}`);
       console.log(`    ${op.description}`);
+      if (op.spawn_mode && op.spawn_mode !== 'local') console.log(`    spawn: ${op.spawn_mode} transport=${op.transport || '-'}`);
       if (op.script_ref) console.log(`    script: ${op.script_ref}`);
     }
     console.log('');
   } else if (sub === 'run') {
     const opId = rest[0];
-    if (!opId) printError('Usage: operations run <id> [--commit] [--description "..."]');
-    const commit = flags.commit && !flags.dryRun;
-    const out = runOperation(db, opId, {
-      commit,
-      dry_run: !commit,
-      description: flags.description,
-      triggered_by: 'operator',
-    });
-    printJSON(out);
+    if (!opId) printError('Usage: operations run <id> [--commit] [--host NAME] [--local] [--description "..."]');
+    const op = db.getOperation(opId);
+    if (!op) printError(`Unknown operation: ${opId}`);
+    const targets = flags.host ? [flags.host] : undefined;
+    if (isFleetOperation(op)) {
+      const out = await runFleetOperation(db, opId, {
+        description: flags.description,
+        targets,
+        triggered_by: 'operator',
+        local: !!flags.local,
+      });
+      printJSON(out);
+    } else {
+      const commit = flags.commit && !flags.dryRun;
+      const out = runOperation(db, opId, {
+        commit,
+        dry_run: !commit,
+        description: flags.description,
+        triggered_by: 'operator',
+      });
+      printJSON(out);
+    }
   } else if (sub === 'runs') {
     const rows = db.listOperationRuns({
       operation_id: flags.operationId,

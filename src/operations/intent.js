@@ -12,9 +12,30 @@ const DOC_SCAN_PATTERNS = [
   /\bregenerate\s+doc[_\s-]?snapshot\b/i,
 ];
 
+const FLEET_ENV_SCAN_PATTERNS = [
+  /\bfind\s+env\s+files?\b/i,
+  /\b\.env\s+locations?\b/i,
+  /\bfleet\s+env\s+scan\b/i,
+  /\bwhere\s+are\s+(the\s+)?\.env\b/i,
+  /\bscan\s+(for\s+)?\.env\s+files?\b/i,
+];
+
 function matchOperationIntent(query) {
   const q = String(query || '').trim();
   if (!q) return null;
+
+  for (const re of FLEET_ENV_SCAN_PATTERNS) {
+    if (re.test(q)) {
+      return {
+        operation_id: 'fleet.find_env_files@v1',
+        title: 'Fleet .env file location scan',
+        reason: 'query matches fleet env file scan keywords',
+        safe_dry_run: false,
+        fleet: true,
+        execute_hint: 'Pass execute=true on /brain/ask or POST /brain/operations/fleet.find_env_files@v1/run',
+      };
+    }
+  }
 
   for (const re of DOC_SCAN_PATTERNS) {
     if (re.test(q)) {
@@ -30,4 +51,4 @@ function matchOperationIntent(query) {
   return null;
 }
 
-module.exports = { matchOperationIntent, DOC_SCAN_PATTERNS };
+module.exports = { matchOperationIntent, DOC_SCAN_PATTERNS, FLEET_ENV_SCAN_PATTERNS };

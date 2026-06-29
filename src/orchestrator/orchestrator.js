@@ -436,22 +436,40 @@ class Orchestrator {
       return { session_id: sessionId, ...skillIngest };
     }
 
-    const { matchOperationIntent, runOperation } = require('../operations');
+    const { matchOperationIntent, runOperation, runFleetOperation } = require('../operations');
     const opHint = matchOperationIntent(q);
     if (opHint) {
       const execute = !!(opts.execute || opts.commit);
       if (!execute) {
+        const endpoint = opHint.fleet
+          ? `POST /brain/operations/${opHint.operation_id}/run`
+          : 'POST /brain/operations/doc-registry-scan/run';
         return {
           mode: 'ops',
           session_id: sessionId,
           answer:
             `This looks like a request to run the **${opHint.title}** operation (\`${opHint.operation_id}\`). ` +
-            'Pass `execute: true` on `/brain/ask` (and `commit: true` to persist) or use ' +
-            '`POST /brain/operations/doc-registry-scan/run`.',
+            'Pass `execute: true` on `/brain/ask` or use ' +
+            `\`${endpoint}\`.`,
           detail: { operation_suggestion: opHint },
         };
       }
       if (this.db && typeof this.db.createOperationRun === 'function') {
+        if (opHint.fleet) {
+          const out = await runFleetOperation(this.db, opHint.operation_id, {
+            description: q.slice(0, 500),
+            triggered_by: 'ask',
+            targets: opts.targets,
+          });
+          return {
+            mode: 'ops',
+            session_id: sessionId,
+            answer: out.ok
+              ? `Fleet operation \`${opHint.operation_id}\` completed (run ${out.run_id}). ${out.output_summary || ''}`
+              : `Fleet operation \`${opHint.operation_id}\` failed: ${out.output_summary || out.error}`,
+            detail: { operation_run: out, report: out.report },
+          };
+        }
         const out = runOperation(this.db, opHint.operation_id, {
           commit: !!opts.commit,
           dry_run: !opts.commit,

@@ -26,6 +26,15 @@ const BUILTIN_OPERATIONS = [
     handler_ref: 'schemaSnapshot',
     script_ref: 'scripts/dump-schema.js',
   },
+  {
+    id: 'fleet.find_env_files@v1',
+    title: 'Fleet .env file location scan',
+    description: 'Safe path-only scan for .env and .env.* under /var/www, /opt, /etc/omai on fleet hosts (never reads contents)',
+    handler_ref: 'fleetFindEnvFiles',
+    script_ref: 'scripts/fleet/handlers/find-env-files.sh',
+    spawn_mode: 'fleet_ssh',
+    transport: 'ssh',
+  },
 ];
 
 function getBuiltinOperations() {

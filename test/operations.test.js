@@ -51,12 +51,13 @@ function fixtureStructure(dir) {
 test('operation registry seeds built-in operations', () => {
   const { db } = freshDb();
   const ops = db.listOperations();
-  assert.ok(ops.length >= 3);
+  assert.ok(ops.length >= 4);
   const ids = ops.map((o) => o.id);
   assert.ok(ids.includes('doc-registry-scan'));
   assert.ok(ids.includes('host-snapshot'));
   assert.ok(ids.includes('schema-snapshot'));
-  assert.deepStrictEqual(getBuiltinOperations().length, 3);
+  assert.ok(ids.includes('fleet.find_env_files@v1'));
+  assert.deepStrictEqual(getBuiltinOperations().length, 4);
 });
 
 test('operation run creates run record', () => {

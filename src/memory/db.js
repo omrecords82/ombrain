@@ -118,7 +118,8 @@ class MemoryDB {
       doc_registry: [],
       operation_registry: [],
       operation_runs: [],
-      _seq: { doctrine: 0, systruth: 0, event: 0, work: 0, decision: 0, approval: 0, apphist: 0, omaudit: 0, task: 0, knowledge: 0, procedure: 0, correction: 0, theology: 0, church: 0, btw: 0, skill: 0, doc: 0, operation: 0, operation_run: 0 },
+      operation_run_children: [],
+      _seq: { doctrine: 0, systruth: 0, event: 0, work: 0, decision: 0, approval: 0, apphist: 0, omaudit: 0, task: 0, knowledge: 0, procedure: 0, correction: 0, theology: 0, church: 0, btw: 0, skill: 0, doc: 0, operation: 0, operation_run: 0, operation_run_child: 0 },
     };
     if (fs.existsSync(this.dbPath + '.json')) {
       try {
@@ -131,6 +132,7 @@ class MemoryDB {
     }
     if (!this.json.operation_registry) this.json.operation_registry = [];
     if (!this.json.operation_runs) this.json.operation_runs = [];
+    if (!this.json.operation_run_children) this.json.operation_run_children = [];
     this.seedOperationRegistry();
   }
 
@@ -1626,20 +1628,28 @@ class MemoryDB {
     return rows.slice(0, limit);
   }
 
-  upsertOperation({ id, title, description, handler_ref, script_ref, active }) {
+  upsertOperation({ id, title, description, handler_ref, script_ref, active, spawn_mode, transport }) {
     const now = new Date().toISOString();
+    const spawnMode = spawn_mode || 'local';
+    const transportVal = transport || null;
     if (this.backend === 'sqlite') {
       this.sqlite.prepare(
-        `INSERT INTO operation_registry (id, title, description, handler_ref, script_ref, active, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        `INSERT INTO operation_registry (id, title, description, handler_ref, script_ref, active, spawn_mode, transport, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title,
            description = excluded.description,
            handler_ref = excluded.handler_ref,
            script_ref = excluded.script_ref,
            active = excluded.active,
+           spawn_mode = excluded.spawn_mode,
+           transport = excluded.transport,
            updated_at = datetime('now')`,
-      ).run(id, title, description, handler_ref, script_ref || null, active != null ? (active ? 1 : 0) : 1);
+      ).run(
+        id, title, description, handler_ref, script_ref || null,
+        active != null ? (active ? 1 : 0) : 1,
+        spawnMode, transportVal,
+      );
       return id;
     }
     const idx = this.json.operation_registry.findIndex((r) => r.id === id);
@@ -1647,6 +1657,8 @@ class MemoryDB {
       id, title, description, handler_ref,
       script_ref: script_ref || null,
       active: active != null ? (active ? 1 : 0) : 1,
+      spawn_mode: spawnMode,
+      transport: transportVal,
       created_at: idx >= 0 ? this.json.operation_registry[idx].created_at : now,
       updated_at: now,
     };
@@ -1739,6 +1751,74 @@ class MemoryDB {
     if (status) rows = rows.filter((r) => r.status === status);
     rows.sort((a, b) => String(b.started_at || b.created_at).localeCompare(String(a.started_at || a.created_at)));
     return rows.slice(0, cap);
+  }
+
+  createOperationRunChild({
+    id, parent_run_id, host, hostname, status, transport, started_at,
+  }) {
+    if (this.backend === 'sqlite') {
+      this.sqlite.prepare(
+        `INSERT INTO operation_run_children (id, parent_run_id, host, hostname, status, transport, started_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      ).run(
+        id, parent_run_id, host, hostname || host, status || 'pending',
+        transport || 'ssh', started_at || null,
+      );
+      return id;
+    }
+    const now = new Date().toISOString();
+    this.json.operation_run_children.push({
+      id,
+      parent_run_id,
+      host,
+      hostname: hostname || host,
+      status: status || 'pending',
+      exit_code: null,
+      result_json: null,
+      transport: transport || 'ssh',
+      started_at: started_at || null,
+      finished_at: null,
+      created_at: now,
+    });
+    this._persistJson();
+    return id;
+  }
+
+  updateOperationRunChild(id, patch) {
+    if (this.backend === 'sqlite') {
+      const fields = [];
+      const params = [];
+      for (const key of ['hostname', 'status', 'exit_code', 'result_json', 'transport', 'started_at', 'finished_at']) {
+        if (patch[key] !== undefined) { fields.push(`${key} = ?`); params.push(patch[key]); }
+      }
+      if (!fields.length) return false;
+      params.push(id);
+      this.sqlite.prepare(`UPDATE operation_run_children SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+      return true;
+    }
+    const idx = this.json.operation_run_children.findIndex((r) => r.id === id);
+    if (idx < 0) return false;
+    Object.assign(this.json.operation_run_children[idx], patch);
+    this._persistJson();
+    return true;
+  }
+
+  getOperationRunChild(id) {
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare('SELECT * FROM operation_run_children WHERE id = ?').get(id) || null;
+    }
+    return this.json.operation_run_children.find((r) => r.id === id) || null;
+  }
+
+  listOperationRunChildren(parentRunId) {
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare(
+        'SELECT * FROM operation_run_children WHERE parent_run_id = ? ORDER BY started_at, created_at',
+      ).all(parentRunId);
+    }
+    return this.json.operation_run_children
+      .filter((r) => r.parent_run_id === parentRunId)
+      .sort((a, b) => String(a.started_at || a.created_at).localeCompare(String(b.started_at || b.created_at)));
   }
 
   close() {

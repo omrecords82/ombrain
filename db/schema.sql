@@ -490,6 +490,8 @@ CREATE TABLE IF NOT EXISTS operation_registry (
   handler_ref     TEXT NOT NULL,
   script_ref      TEXT,
   active          INTEGER NOT NULL DEFAULT 1,
+  spawn_mode      TEXT NOT NULL DEFAULT 'local',
+  transport       TEXT,
   created_at      TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -514,3 +516,23 @@ CREATE TABLE IF NOT EXISTS operation_runs (
 CREATE INDEX IF NOT EXISTS idx_operation_runs_op ON operation_runs(operation_id);
 CREATE INDEX IF NOT EXISTS idx_operation_runs_status ON operation_runs(status);
 CREATE INDEX IF NOT EXISTS idx_operation_runs_started ON operation_runs(started_at);
+
+-- -----------------------------------------------------------------------------
+-- 20. operation_run_children — per-host fleet execution rows.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS operation_run_children (
+  id              TEXT PRIMARY KEY,
+  parent_run_id   TEXT NOT NULL,
+  host            TEXT NOT NULL,
+  hostname        TEXT,
+  status          TEXT NOT NULL DEFAULT 'pending',
+  exit_code       INTEGER,
+  result_json     TEXT,
+  transport       TEXT NOT NULL DEFAULT 'ssh',
+  started_at      TEXT,
+  finished_at     TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (parent_run_id) REFERENCES operation_runs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_operation_run_children_parent ON operation_run_children(parent_run_id);
+CREATE INDEX IF NOT EXISTS idx_operation_run_children_host ON operation_run_children(host);
