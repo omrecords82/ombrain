@@ -1,0 +1,28 @@
+# getbrain — LAN bootstrap service for the ombrain CLI (runs on om-prod01 / .239)
+#
+# Install:
+#   sudo cp om-brain/getbrain/getbrain.service /etc/systemd/system/getbrain.service
+#   sudo install -m 0600 om-brain/getbrain/getbrain.env.example /etc/om-brain/getbrain.env
+#   sudo nano /etc/om-brain/getbrain.env          # set GETBRAIN_PIN
+#   sudo systemctl daemon-reload && sudo systemctl enable --now getbrain
+#
+[Unit]
+Description=getbrain LAN bootstrap service (ombrain installer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust WorkingDirectory/ExecStart to the deployed repo path on .239.
+WorkingDirectory=/var/www/omai/om-brain
+EnvironmentFile=/etc/om-brain/getbrain.env
+ExecStart=/usr/bin/node /var/www/omai/om-brain/getbrain/server.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
