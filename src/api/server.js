@@ -23,6 +23,12 @@ const breaker = require('../ai/circuitBreaker');
 const { redactForLog } = require('../ai/redactor');
 const logger = require('../util/logger');
 const { validateWebhookSecret } = require('../governance/omstudioClient');
+const {
+  resolveIngestSecret,
+  validateIngestAuth,
+  validateIngestPayload,
+  persistIngestedEvent,
+} = require('../ingest/platformEventIngest');
 
 // ---------------------------------------------------------------------------
 // Calendar helpers (loaded lazily to avoid startup errors if module is absent)
@@ -208,8 +214,40 @@ function createServer(deps = {}) {
       omstudio_base_url_allowed: verdict.allowed,
       omstudio_base_url_reason: verdict.reason,
       webhook_secret_configured: webhookSecretConfigured,
+      event_ingest_secret_configured: !!resolveIngestSecret(),
       outbox_dir: (config.omstudio && config.omstudio.outboxDir) || './data/omstudio-outbox',
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Platform event push ingest (Option A — any service POSTs events directly)
+  // -------------------------------------------------------------------------
+
+  app.post('/brain/ingest/event', (req, res) => {
+    try {
+      const secretCheck = validateIngestAuth(req.headers['x-om-webhook-secret']);
+      if (!secretCheck.ok) {
+        logger.warn('event_ingest_secret_rejected', { reason: secretCheck.reason });
+        return res.status(401).json({ ok: false, error: secretCheck.reason });
+      }
+
+      if (!db) return res.status(503).json({ ok: false, error: 'no_db' });
+
+      const payloadCheck = validateIngestPayload(req.body);
+      if (!payloadCheck.ok) {
+        return res.status(400).json({ ok: false, error: payloadCheck.reason });
+      }
+
+      const out = persistIngestedEvent(db, payloadCheck, redactForLog);
+      logger.info('event_ingest_applied', {
+        source: out.source,
+        type: out.type,
+      });
+      return res.json(out);
+    } catch (e) {
+      logger.error('event_ingest_endpoint_error', { name: e && e.name });
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
   });
 
   // -------------------------------------------------------------------------

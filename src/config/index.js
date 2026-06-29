@@ -102,6 +102,8 @@ const config = Object.freeze({
     enableEventAdapter: bool(env.BRAIN_ENABLE_EVENT_ADAPTER, false),
     enableInventoryAdapter: bool(env.BRAIN_ENABLE_INVENTORY_ADAPTER, false),
     enableLogAdapter: bool(env.BRAIN_ENABLE_LOG_ADAPTER, false),
+    // Shared secret for POST /brain/ingest/event (falls back to OMSTUDIO_WEBHOOK_SECRET).
+    ingestSecret: env.BRAIN_INGEST_SECRET || env.OMSTUDIO_WEBHOOK_SECRET || '',
   },
 
   memory: {

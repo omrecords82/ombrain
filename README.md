@@ -221,6 +221,7 @@ curl -s http://127.0.0.1:8390/decisions | jq .
 | --- | --- | --- |
 | GET | `/health` | liveness, posture, memory backend, circuit-breaker verdict |
 | GET | `/audit/findings?limit=N` | recent ingested (redacted) events |
+| POST | `/brain/ingest/event` | push operational events from OM / OMAI / OMStudio / Workshop (`X-OM-Webhook-Secret`) |
 | POST | `/diagnose` | analyze an incident/proposal → deterministic classification + explanation + recommendation + verification steps; writes a ledger entry; audits to OMStudio; routes human-only/Tier 0 to an approval request; `executed` is always `false` |
 | GET | `/decisions?limit=N` | the append-only decision ledger |
 | GET | `/governance/approvals?limit=N` | approval requests + current state |
@@ -291,6 +292,34 @@ curl -s -X POST http://127.0.0.1:8390/governance/approvals/1/ingest-status \
   -d '{"decision":"approved","source":"dryrun_sim"}' | jq .
 ls data/omstudio-outbox/   # outbound records
 ```
+
+**Platform event push (Option A):**
+
+Services on OM (`.239`), OMStudio (`.242`), and Workshop (`.251`) can POST
+operational events directly to om-brain. Payloads land in the same `event_memory`
+table as the read-only OMAI polling adapter. Auth uses the
+`X-OM-Webhook-Secret` header (`BRAIN_INGEST_SECRET`, or `OMSTUDIO_WEBHOOK_SECRET`
+as fallback).
+
+```bash
+# From any LAN host (requires deploy/om-brain-lan-api.conf on om-dev)
+curl -s -X POST http://192.168.1.254:8390/brain/ingest/event \
+  -H 'Content-Type: application/json' \
+  -H 'X-OM-Webhook-Secret: YOUR_SHARED_SECRET' \
+  -d '{
+    "source": "om",
+    "type": "deploy.completed",
+    "timestamp": "2026-06-28T12:00:00Z",
+    "data": { "target": "fe", "status": "ok" }
+  }' | jq .
+
+# Verify ingestion
+curl -s 'http://127.0.0.1:8390/audit/findings?limit=5' | jq .
+```
+
+Allowed `source` values: `om`, `omai`, `omstudio`, `workshop`. See
+[`docs/om-brain/PRODUCTION-GAPS.md`](../docs/om-brain/PRODUCTION-GAPS.md) for
+Options B (log adapter) and C (additional polling adapters).
 
 ---
 
