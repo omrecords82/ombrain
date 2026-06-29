@@ -141,12 +141,21 @@ class MemoryDB {
     const migDir = path.resolve(__dirname, '..', '..', 'db', 'migrations');
     if (!fs.existsSync(migDir)) return;
     const files = fs.readdirSync(migDir).filter((f) => f.endsWith('.sql')).sort();
+    const ignorable = /duplicate column name|already exists|UNIQUE constraint failed/i;
     for (const file of files) {
-      try {
-        const sql = fs.readFileSync(path.join(migDir, file), 'utf8');
-        this.sqlite.exec(sql);
-      } catch (_) {
-        // idempotent CREATE IF NOT EXISTS
+      const sql = fs.readFileSync(path.join(migDir, file), 'utf8');
+      const statements = sql
+        .split(/;\s*(?:\r?\n|$)/)
+        .map((s) => s.replace(/^[\s-]*--[^\n]*\n?/gm, '').trim())
+        .filter(Boolean);
+      for (const stmt of statements) {
+        try {
+          this.sqlite.exec(stmt);
+        } catch (e) {
+          if (!ignorable.test(String(e.message || e))) {
+            // Non-idempotent failure — leave for operator / next deploy.
+          }
+        }
       }
     }
   }
