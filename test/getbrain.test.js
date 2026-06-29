@@ -83,6 +83,20 @@ test('e2e: health, PIN gate, token flow, asset gating', async () => {
     const form = await req(port, 'GET', '/getbrain/');
     assert.equal(form.status, 200);
     assert.match(form.body, /Bootstrap PIN/);
+    assert.match(form.body, /Super admin sign-in/);
+
+    // superadmin session bypasses PIN
+    gb.setAuthVerifier(async () => ({
+      email: 'super@test',
+      role: 'super_admin',
+      isSuperAdmin: true,
+      userId: 1,
+    }));
+    const sa = await req(port, 'POST', '/getbrain/install',
+      { body: '', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+    assert.equal(sa.status, 200);
+    assert.match(sa.body, /bootstrap\.sh\?token=/);
+    gb.setAuthVerifier(null);
 
     // wrong PIN -> 401
     const bad = await req(port, 'POST', '/getbrain/install',

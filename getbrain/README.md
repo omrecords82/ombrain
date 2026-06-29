@@ -6,7 +6,10 @@
 From a WSL or Linux workstation on **192.168.1.0/24**:
 
 1. Open **`http://orthodoxmetrics.com/getbrain/`**
-2. Enter the **shared bootstrap PIN**
+2. Either:
+   - **Sign in** with a `super_admin` OrthodoxMetrics account to view the bootstrap PIN
+     and click **Generate install command** (no manual PIN lookup on the server), or
+   - Enter the **shared bootstrap PIN** if you already have it
 3. Copy the one-line command it shows and run it:
    ```bash
    curl -fsSL "http://orthodoxmetrics.com/getbrain/bootstrap.sh?token=…" | sudo bash
@@ -26,7 +29,7 @@ over the LAN using the master/backup + port-pool registry
 
 ## Security model
 
-`getbrain` grants Brain access, so it is gated two ways:
+`getbrain` grants Brain access, so it is gated three ways:
 
 1. **Subnet allowlist** — only client IPs in `GETBRAIN_ALLOW_CIDR`
    (default `192.168.1.0/24`) reach anything but a localhost health check. The
@@ -34,8 +37,14 @@ over the LAN using the master/backup + port-pool registry
 2. **Shared PIN** — `POST /getbrain/install` checks `GETBRAIN_PIN`
    (constant-time compare). Wrong PINs are rate-limited per IP
    (`GETBRAIN_MAX_ATTEMPTS` per 15 min).
+3. **Super admin session** — operators with an active OrthodoxMetrics
+   `super_admin` session (cookie `orthodoxmetrics.sid`) can sign in on the
+   getbrain page. The service validates that session against the local OM API
+   (`GETBRAIN_OM_AUTH_URL`) and then reveals the bootstrap PIN server-side and
+   allows generating an install token without typing the PIN. The PIN is never
+   embedded in client-side JavaScript or static assets.
 
-On a correct PIN the service issues a **short-lived, single-use, IP-bound token**
+On a correct PIN **or** super_admin session the service issues a **short-lived, single-use, IP-bound token**
 (`GETBRAIN_TOKEN_TTL_MS`, default 10 min). The token authorizes fetching
 `bootstrap.sh`, which itself carries a fresh token to fetch the two installer
 assets (`ombrain.js`, `install-ombrain.sh`). Tokens are in-memory and expire.
@@ -85,8 +94,9 @@ The service strips a leading `/getbrain` so it works behind the nginx
 
 | Public URL | Method | Purpose |
 |-----------|--------|---------|
-| `/getbrain/` | GET | PIN form |
-| `/getbrain/install` | POST | Verify PIN → issue token → show one-liner |
+| `/getbrain/` | GET | Sign-in + bootstrap PIN form |
+| `/getbrain/login` | POST | Proxy OM login for super_admin |
+| `/getbrain/install` | POST | Super admin session or PIN → token → one-liner |
 | `/getbrain/bootstrap.sh?token=` | GET | The `curl \| bash` script (token, single-use) |
 | `/getbrain/ombrain.js?token=` | GET | CLI asset (token-gated) |
 | `/getbrain/install-ombrain.sh?token=` | GET | Installer asset (token-gated) |

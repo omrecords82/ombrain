@@ -27,6 +27,8 @@
  *                          (default http://orthodoxmetrics.com/getbrain)
  *   GETBRAIN_TOKEN_TTL_MS  token lifetime ms       (default 600000 = 10 min)
  *   GETBRAIN_MAX_ATTEMPTS  PIN attempts per IP / window (default 5)
+ *   GETBRAIN_OM_AUTH_URL   OM session check for super_admin (default loopback)
+ *   GETBRAIN_OM_LOGIN_URL  OM login endpoint for the getbrain sign-in form
  */
 
 const http = require('http');
@@ -53,6 +55,10 @@ const CFG = {
     .replace(/\/+$/, ''),
   tokenTtlMs: parseInt(process.env.GETBRAIN_TOKEN_TTL_MS || '600000', 10),
   maxAttempts: parseInt(process.env.GETBRAIN_MAX_ATTEMPTS || '5', 10),
+  omAuthUrl: process.env.GETBRAIN_OM_AUTH_URL ||
+    'http://127.0.0.1:3001/api/auth/validate-session?check_super_admin=true',
+  omLoginUrl: process.env.GETBRAIN_OM_LOGIN_URL ||
+    'http://127.0.0.1:3001/api/auth/login',
 };
 
 // ---------------------------------------------------------------------------
@@ -172,31 +178,165 @@ function parseForm(body) {
   return out;
 }
 
+function escHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ---------------------------------------------------------------------------
+// OM session auth — validates orthodoxmetrics.sid via the local OM API.
+// ---------------------------------------------------------------------------
+let authVerifierImpl = null;
+function setAuthVerifier(fn) { authVerifierImpl = fn; }
+
+function omHttpRequest(targetUrl, { method = 'GET', headers = {}, body = null, timeoutMs = 5000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(targetUrl);
+    const opts = {
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: `${url.pathname}${url.search}`,
+      method,
+      headers,
+      timeout: timeoutMs,
+    };
+    if (body != null) {
+      opts.headers['Content-Length'] = Buffer.byteLength(body);
+    }
+    const r = http.request(opts, (omRes) => {
+      let data = '';
+      omRes.on('data', chunk => { data += chunk; });
+      omRes.on('end', () => {
+        resolve({
+          status: omRes.statusCode || 0,
+          headers: omRes.headers,
+          body: data,
+        });
+      });
+    });
+    r.on('error', reject);
+    r.on('timeout', () => { r.destroy(); reject(new Error('om auth timeout')); });
+    if (body != null) r.write(body);
+    r.end();
+  });
+}
+
+async function verifySuperAdmin(req) {
+  if (authVerifierImpl) return authVerifierImpl(req);
+  const cookie = req.headers.cookie || '';
+  if (!cookie.includes('orthodoxmetrics.sid=')) return null;
+  try {
+    const resp = await omHttpRequest(CFG.omAuthUrl, {
+      method: 'GET',
+      headers: { Cookie: cookie, Accept: 'application/json' },
+    });
+    if (resp.status !== 200) return null;
+    const data = JSON.parse(resp.body || '{}');
+    if (!data.success || !data.valid || !data.isSuperAdmin) return null;
+    return {
+      email: data.email || '',
+      role: data.role || 'super_admin',
+      isSuperAdmin: true,
+      userId: data.userId,
+    };
+  } catch (err) {
+    console.warn('[getbrain] OM auth check failed:', err.message);
+    return null;
+  }
+}
+
+async function proxyOmLogin(email, password) {
+  const payload = JSON.stringify({ email, password });
+  return omHttpRequest(CFG.omLoginUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'Content-Length': Buffer.byteLength(payload),
+    },
+    body: payload,
+    timeoutMs: 15000,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Pages
 // ---------------------------------------------------------------------------
-function pageForm(msg = '') {
-  const note = msg ? `<p class="msg">${msg}</p>` : '';
+const PAGE_STYLES = `
+ body{font-family:system-ui,Segoe UI,Roboto,sans-serif;max-width:640px;margin:8vh auto;padding:0 1rem;color:#1b1b1b}
+ h1{font-size:1.4rem} h2{font-size:1.05rem;margin:1.5rem 0 .5rem}
+ code,pre{background:#f4f4f4;border-radius:6px}
+ pre{padding:1rem;overflow:auto;white-space:pre-wrap;word-break:break-all}
+ input[type=password],input[type=email],input[type=text]{font-size:1rem;padding:.5rem;width:100%;max-width:20rem;box-sizing:border-box}
+ input[type=password]{letter-spacing:.15em}
+ button,.btn{font-size:1rem;padding:.55rem 1.1rem;cursor:pointer}
+ .msg{color:#b00020;font-weight:600}.ok{color:#1b5e20;font-weight:600}
+ .muted{color:#666;font-size:.9rem}
+ .panel{border:1px solid #ddd;border-radius:8px;padding:1rem 1.1rem;margin:1rem 0}
+ .panel.super{border-color:#1565c0;background:#f3f8ff}
+ .pin-box{font-size:1.15rem;letter-spacing:.25em;padding:.65rem 1rem;display:inline-block}
+ hr{border:none;border-top:1px solid #e0e0e0;margin:1.5rem 0}
+`;
+
+function pageHome({ msg = '', msgKind = 'error', auth = null } = {}) {
+  const note = msg
+    ? `<p class="${msgKind === 'ok' ? 'ok' : 'msg'}">${escHtml(msg)}</p>`
+    : '';
+
+  let superPanel = '';
+  if (auth && auth.isSuperAdmin) {
+    const pinBlock = CFG.pin
+      ? `<p class="muted">Share this PIN with LAN operators who are not signed in:</p>
+         <p><code class="pin-box">${escHtml(CFG.pin)}</code></p>`
+      : `<p class="msg">Bootstrap PIN is not configured on the server.</p>`;
+    superPanel = `
+<div class="panel super">
+  <h2>Signed in as super admin</h2>
+  <p class="muted">Signed in as <strong>${escHtml(auth.email || 'super admin')}</strong>.</p>
+  ${pinBlock}
+  <form method="POST" action="/getbrain/install">
+    <p><button type="submit">Generate install command</button></p>
+  </form>
+  <p class="muted"><a href="/auth/login">Open OrthodoxMetrics sign-in</a> in another tab if you need a different account.</p>
+</div>`;
+  } else {
+    superPanel = `
+<div class="panel">
+  <h2>Super admin sign-in</h2>
+  <p class="muted">Sign in with a <code>super_admin</code> OrthodoxMetrics account to view the bootstrap PIN
+  and generate an install command without typing it.</p>
+  <form method="POST" action="/getbrain/login">
+    <p><label>Email<br><input type="email" name="email" autocomplete="username" required></label></p>
+    <p><label>Password<br><input type="password" name="password" autocomplete="current-password" required></label></p>
+    <p><button type="submit">Sign in</button></p>
+  </form>
+  <p class="muted">Already signed in at orthodoxmetrics.com? Refresh this page.</p>
+</div>`;
+  }
+
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>getbrain — install ombrain</title>
-<style>
- body{font-family:system-ui,Segoe UI,Roboto,sans-serif;max-width:560px;margin:8vh auto;padding:0 1rem;color:#1b1b1b}
- h1{font-size:1.4rem} code,pre{background:#f4f4f4;border-radius:6px}
- pre{padding:1rem;overflow:auto;white-space:pre-wrap;word-break:break-all}
- input[type=password]{font-size:1.1rem;padding:.5rem;width:12rem;letter-spacing:.2em}
- button{font-size:1rem;padding:.55rem 1.1rem;cursor:pointer}
- .msg{color:#b00020;font-weight:600}.muted{color:#666;font-size:.9rem}
-</style></head><body>
+<style>${PAGE_STYLES}</style></head><body>
 <h1>Install <code>ombrain</code> on this machine</h1>
-<p class="muted">LAN bootstrap. You must be on the internal network (192.168.1.0/24)
-and have the shared bootstrap PIN.</p>
+<p class="muted">LAN bootstrap. You must be on the internal network (192.168.1.0/24).</p>
 ${note}
-<form method="POST" action="install">
-  <label>Bootstrap PIN<br><input type="password" name="pin" autocomplete="off" autofocus></label>
+${superPanel}
+<hr>
+<h2>Install with bootstrap PIN</h2>
+<p class="muted">If you already have the shared bootstrap PIN, enter it below.</p>
+<form method="POST" action="/getbrain/install">
+  <label>Bootstrap PIN<br><input type="password" name="pin" autocomplete="off"></label>
   <p><button type="submit">Get install command</button></p>
 </form>
 </body></html>`;
+}
+
+function pageForm(msg = '') {
+  return pageHome({ msg, msgKind: 'error', auth: null });
 }
 function pageResult(oneLiner) {
   return `<!doctype html><html><head><meta charset="utf-8">
@@ -267,7 +407,94 @@ function serveAsset(res, file, contentType) {
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
+async function handleInstall(req, res, ip, auth) {
+  if (rateLimited(ip) && !(auth && auth.isSuperAdmin)) {
+    return send(res, 429, pageHome({ msg: 'Too many PIN attempts. Wait 15 minutes.' }),
+      { 'Content-Type': 'text/html; charset=utf-8' });
+  }
+
+  const body = await new Promise(resolve => readBody(req, resolve));
+  if (body === null) return sendText(res, 413, 'request too large\n');
+
+  const superOk = auth && auth.isSuperAdmin;
+  if (superOk) {
+    const token = issueToken(ip);
+    return send(res, 200, pageResult(oneLiner(token)),
+      { 'Content-Type': 'text/html; charset=utf-8' });
+  }
+
+  if (!CFG.pin) return sendText(res, 503, 'service not configured: GETBRAIN_PIN unset\n');
+  const form = parseForm(body);
+  const ok = timingSafeEq(form.pin || '', CFG.pin);
+  noteAttempt(ip, ok);
+  if (!ok) {
+    return send(res, 401, pageHome({ msg: 'Incorrect PIN.', auth }),
+      { 'Content-Type': 'text/html; charset=utf-8' });
+  }
+  const token = issueToken(ip);
+  return send(res, 200, pageResult(oneLiner(token)),
+    { 'Content-Type': 'text/html; charset=utf-8' });
+}
+
+async function handleLogin(req, res) {
+  const body = await new Promise(resolve => readBody(req, resolve));
+  if (body === null) return sendText(res, 413, 'request too large\n');
+  const form = parseForm(body);
+  const email = (form.email || form.username || '').trim();
+  const password = form.password || '';
+  if (!email || !password) {
+    return send(res, 400, pageHome({ msg: 'Email and password are required.' }),
+      { 'Content-Type': 'text/html; charset=utf-8' });
+  }
+
+  try {
+    const om = await proxyOmLogin(email, password);
+    const cookies = om.headers['set-cookie'];
+    if (cookies) res.setHeader('Set-Cookie', cookies);
+
+    let data = {};
+    try { data = JSON.parse(om.body || '{}'); } catch (_) { /* ignore */ }
+
+    if (om.status !== 200 || !data.success) {
+      const msg = data.message || 'Sign-in failed. Check your email and password.';
+      return send(res, 401, pageHome({ msg }),
+        { 'Content-Type': 'text/html; charset=utf-8' });
+    }
+
+    if (data.user && data.user.role !== 'super_admin') {
+      return send(res, 403, pageHome({
+        msg: `Signed in as ${data.user.email}, but super_admin role is required to view the bootstrap PIN.`,
+        msgKind: 'error',
+        auth: null,
+      }), { 'Content-Type': 'text/html; charset=utf-8' });
+    }
+
+    const auth = {
+      email: data.user?.email || email,
+      role: 'super_admin',
+      isSuperAdmin: true,
+      userId: data.user?.id,
+    };
+    return send(res, 200, pageHome({
+      msg: 'Signed in successfully.',
+      msgKind: 'ok',
+      auth,
+    }), { 'Content-Type': 'text/html; charset=utf-8' });
+  } catch (err) {
+    console.warn('[getbrain] OM login proxy failed:', err.message);
+    return send(res, 502, pageHome({ msg: 'Sign-in service unavailable. Try again or sign in at orthodoxmetrics.com first.' }),
+      { 'Content-Type': 'text/html; charset=utf-8' });
+  }
+}
+
 const server = http.createServer((req, res) => {
+  routeRequest(req, res).catch(err => {
+    console.error('[getbrain] request error:', err);
+    sendText(res, 500, 'internal error\n');
+  });
+});
+
+async function routeRequest(req, res) {
   const ip = clientIp(req);
   const url = new URL(req.url, 'http://localhost');
   const route = url.pathname.replace(/^\/getbrain/, '') || '/';
@@ -283,27 +510,21 @@ const server = http.createServer((req, res) => {
     return sendText(res, 403, 'forbidden: not on an allowed network\n');
   }
 
-  // GET / -> PIN form
+  const auth = await verifySuperAdmin(req);
+
+  // GET / -> home (login + optional superadmin panel + PIN form)
   if (req.method === 'GET' && (route === '/' || route === '')) {
-    return send(res, 200, pageForm(), { 'Content-Type': 'text/html; charset=utf-8' });
+    return send(res, 200, pageHome({ auth }), { 'Content-Type': 'text/html; charset=utf-8' });
   }
 
-  // POST /install -> verify PIN, issue token, show one-liner
+  // POST /login -> proxy OM login, forward session cookie
+  if (req.method === 'POST' && route === '/login') {
+    return handleLogin(req, res);
+  }
+
+  // POST /install -> superadmin session OR verify PIN, issue token, show one-liner
   if (req.method === 'POST' && route === '/install') {
-    if (!CFG.pin) return sendText(res, 503, 'service not configured: GETBRAIN_PIN unset\n');
-    if (rateLimited(ip)) return send(res, 429, pageForm('Too many attempts. Wait 15 minutes.'),
-      { 'Content-Type': 'text/html; charset=utf-8' });
-    return readBody(req, body => {
-      if (body === null) return sendText(res, 413, 'request too large\n');
-      const form = parseForm(body);
-      const ok = timingSafeEq(form.pin || '', CFG.pin);
-      noteAttempt(ip, ok);
-      if (!ok) return send(res, 401, pageForm('Incorrect PIN.'),
-        { 'Content-Type': 'text/html; charset=utf-8' });
-      const token = issueToken(ip);
-      return send(res, 200, pageResult(oneLiner(token)),
-        { 'Content-Type': 'text/html; charset=utf-8' });
-    });
+    return handleInstall(req, res, ip, auth);
   }
 
   // token-gated asset/bootstrap endpoints
@@ -329,7 +550,7 @@ const server = http.createServer((req, res) => {
   }
 
   return sendText(res, 404, 'not found\n');
-});
+}
 
 if (require.main === module) {
   if (!CFG.pin) {
@@ -344,4 +565,5 @@ if (require.main === module) {
 module.exports = {
   server, CFG, ipToLong, cidrMatch, ipAllowed, clientIp,
   issueToken, consumeToken, timingSafeEq, oneLiner, bootstrapScript, parseForm,
+  verifySuperAdmin, setAuthVerifier, pageHome, pageForm, handleInstall,
 };
