@@ -39,6 +39,12 @@
       "include_patterns": ["AGENTS.md", "CLAUDE.md", "ai-agent-workflow.md"]
     },
     {
+      "repo": "om",
+      "path": "/var/www/orthodoxmetrics/prod/storage/docs-dropbox",
+      "include_root_md": false,
+      "include_patterns": ["*.md", "*.html", "*.txt", "*.pdf"]
+    },
+    {
       "repo": "ops",
       "path": "/var/omai-ops/docs",
       "include_root_md": false
