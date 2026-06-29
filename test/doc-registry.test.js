@@ -14,6 +14,7 @@ const {
   runScan,
   classifyPath,
   inferTitle,
+  dedupePathRepo,
 } = require('../src/docRegistry');
 
 const TEST_TMP = path.join(__dirname, '..', '.test-tmp');
@@ -100,6 +101,74 @@ test('scanFilesystem finds fixtures and marks duplicates', () => {
   assert.ok(entries.length >= 3);
   const dupes = entries.filter((e) => e.status === 'duplicate');
   assert.ok(dupes.length >= 1, 'expected at least one duplicate by sha256');
+});
+
+test('dedupePathRepo collapses overlapping scan roots', () => {
+  fs.mkdirSync(TEST_TMP, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(TEST_TMP, 'docoverlap-'));
+  const parent = path.join(dir, 'repo');
+  const child = path.join(parent, 'docs');
+  fs.mkdirSync(child, { recursive: true });
+  fs.writeFileSync(path.join(child, 'guide.md'), '# Guide\n\nShared doc.');
+  fs.writeFileSync(path.join(parent, 'README.md'), '# Root\n');
+
+  const roots = {
+    schema_version: 1,
+    exclude_dir_names: ['.git'],
+    exclude_path_globs: [],
+    roots: [
+      { repo: 'omai', path: parent, include_root_md: false },
+      { repo: 'omai', path: child, include_root_md: false },
+    ],
+  };
+  const rootsPath = path.join(dir, 'roots.json');
+  const structurePath = path.join(dir, 'structure.json');
+  fs.writeFileSync(rootsPath, JSON.stringify(roots));
+  fs.writeFileSync(structurePath, JSON.stringify(fixtureStructure(dir)));
+
+  const entries = scanFilesystem({ rootsPath, structurePath });
+  const keys = entries.map((e) => `${e.path}|${e.repo}`);
+  assert.strictEqual(keys.length, new Set(keys).size, 'expected unique path|repo per entry');
+  assert.ok(entries.some((e) => e.path.endsWith('guide.md')));
+});
+
+test('runScan commit survives include_root_md without UNIQUE errors', () => {
+  fs.mkdirSync(TEST_TMP, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(TEST_TMP, 'docrootmd-'));
+  const proj = path.join(dir, 'proj');
+  fs.mkdirSync(proj, { recursive: true });
+  fs.writeFileSync(path.join(proj, 'README.md'), '# Project\n');
+  fs.writeFileSync(path.join(proj, 'notes.md'), '# Notes\n');
+
+  const rootsPath = path.join(dir, 'roots.json');
+  const structurePath = path.join(dir, 'structure.json');
+  const outPath = path.join(dir, 'DOC-SNAPSHOT.md');
+  fs.writeFileSync(
+    rootsPath,
+    JSON.stringify({
+      schema_version: 1,
+      exclude_dir_names: ['.git'],
+      exclude_path_globs: [],
+      roots: [
+        {
+          repo: 'omai',
+          path: proj,
+          include_root_md: true,
+          include_patterns: ['*.md'],
+        },
+      ],
+    }),
+  );
+  fs.writeFileSync(structurePath, JSON.stringify(fixtureStructure(dir)));
+
+  const { db } = freshDb();
+  assert.doesNotThrow(() => {
+    runScan(db, { commit: true, rootsPath, structurePath, outPath });
+  });
+  const stored = db.listDocRegistry({});
+  const paths = stored.map((r) => r.path);
+  assert.strictEqual(paths.length, new Set(paths).size);
+  assert.ok(stored.some((r) => r.path.endsWith('README.md')));
 });
 
 test('MemoryDB doc registry CRUD', () => {

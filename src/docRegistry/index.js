@@ -80,6 +80,8 @@ function walkMarkdown(rootEntry, config, files) {
       if (ent.isDirectory()) {
         walk(abs);
       } else if (ent.isFile() && shouldIncludeFile(abs, rootEntry, config)) {
+        // include_root_md already indexed root-level files; skip to avoid duplicates.
+        if (dir === rootPath && rootEntry.include_root_md) continue;
         files.push({ absPath: abs, repo: rootEntry.repo });
       }
     }
@@ -143,7 +145,38 @@ function scanFilesystem(opts = {}) {
     };
   });
 
-  return applyDuplicateDetection(entries, structure);
+  const deduped = dedupePathRepo(entries, config);
+  return applyDuplicateDetection(deduped, structure);
+}
+
+/**
+ * Collapse duplicate (path, repo) rows from overlapping scan roots or include_root_md.
+ * When multiple roots claim the same file, prefer the longest (deepest) matching root path.
+ */
+function dedupePathRepo(entries, rootsConfig) {
+  const roots = (rootsConfig?.roots || [])
+    .map((r) => ({ repo: r.repo, path: path.resolve(r.path) }))
+    .sort((a, b) => b.path.length - a.path.length);
+
+  function matchingRootLength(entry) {
+    for (const r of roots) {
+      if (entry.repo !== r.repo) continue;
+      if (entry.path === r.path || entry.path.startsWith(r.path + path.sep)) {
+        return r.path.length;
+      }
+    }
+    return 0;
+  }
+
+  const byKey = new Map();
+  for (const e of entries) {
+    const key = `${e.path}\0${e.repo}`;
+    const prev = byKey.get(key);
+    if (!prev || matchingRootLength(e) > matchingRootLength(prev)) {
+      byKey.set(key, e);
+    }
+  }
+  return Array.from(byKey.values());
 }
 
 function applyDuplicateDetection(entries, structure) {
@@ -338,4 +371,5 @@ module.exports = {
   getStructure,
   classifyPath,
   inferTitle,
+  dedupePathRepo,
 };
