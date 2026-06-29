@@ -1,31 +1,16 @@
 'use strict';
 
 const fs = require('fs');
-const path = require('path');
 const { spawnSync } = require('child_process');
 const logger = require('../../util/logger');
 const { ROOT } = require('../hosts');
-
-const ALLOWED_HANDLER_PREFIX = 'scripts/fleet/handlers/';
+const {
+  ALLOWED_HANDLER_PREFIX,
+  assertAllowlistedHandler,
+} = require('../handlers');
 const DEFAULT_SSH_USER = process.env.FLEET_SSH_USER || 'next';
 const DEFAULT_SSH_IDENTITY_FILE = process.env.FLEET_SSH_IDENTITY_FILE || '';
 const DEFAULT_TIMEOUT_MS = Number(process.env.FLEET_SSH_TIMEOUT_MS) || 120000;
-
-function assertAllowlistedHandler(handlerRef) {
-  const rel = String(handlerRef || '').replace(/\\/g, '/');
-  if (!rel.startsWith(ALLOWED_HANDLER_PREFIX) || rel.includes('..')) {
-    const err = new Error(`handler not allowlisted: ${handlerRef}`);
-    err.code = 'handler_not_allowlisted';
-    throw err;
-  }
-  const abs = path.join(ROOT, rel);
-  if (!fs.existsSync(abs)) {
-    const err = new Error(`handler script missing: ${rel}`);
-    err.code = 'handler_missing';
-    throw err;
-  }
-  return abs;
-}
 
 /**
  * Execute an allowlisted handler script on a remote host via SSH (stdin pipe).
@@ -36,7 +21,7 @@ function assertAllowlistedHandler(handlerRef) {
  * @returns {{ stdout: string, stderr: string, exit_code: number }}
  */
 function execute(hostConfig, handlerRef, env = {}) {
-  const scriptAbs = assertAllowlistedHandler(handlerRef);
+  const scriptAbs = assertAllowlistedHandler(handlerRef, ROOT);
   const scriptContent = fs.readFileSync(scriptAbs, 'utf8');
   const remoteTarget = `${DEFAULT_SSH_USER}@${hostConfig.ip}`;
 
@@ -81,7 +66,7 @@ function execute(hostConfig, handlerRef, env = {}) {
  * Run handler locally (for tests and dry-run without SSH).
  */
 function executeLocal(_hostConfig, handlerRef, env = {}) {
-  const scriptAbs = assertAllowlistedHandler(handlerRef);
+  const scriptAbs = assertAllowlistedHandler(handlerRef, ROOT);
   const proc = spawnSync('bash', [scriptAbs], {
     cwd: ROOT,
     encoding: 'utf8',

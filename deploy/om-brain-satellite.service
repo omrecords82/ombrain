@@ -1,0 +1,25 @@
+[Unit]
+Description=om-brain fleet satellite worker
+Documentation=file:/opt/om-brain/docs/FLEET-OPS.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=next
+Group=next
+WorkingDirectory=/opt/om-brain
+EnvironmentFile=-/etc/om-brain/satellite.env
+ExecStart=/usr/bin/node /opt/om-brain/scripts/fleet/satellite-worker.js
+Restart=on-failure
+RestartSec=5
+
+# Satellite runs allowlisted handlers only — no shell from NATS payloads
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/om-brain
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

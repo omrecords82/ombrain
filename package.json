@@ -23,12 +23,12 @@
   },
   "dependencies": {
     "express": "^4.19.2",
+    "nats": "^2.29.3",
     "openai": "^4.56.0",
     "ws": "^8.18.0"
   },
   "optionalDependencies": {
     "better-sqlite3": "^11.3.0",
     "sqlite-vec": "^0.1.6"
-  },
-  "devDependencies": {}
+  }
 }

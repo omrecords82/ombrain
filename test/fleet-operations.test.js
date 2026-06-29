@@ -38,7 +38,7 @@ test('fleet operation registered with spawn_mode fleet_ssh', () => {
   const op = getBuiltinOperation('fleet.find_env_files@v1');
   assert.ok(op);
   assert.strictEqual(op.spawn_mode, 'fleet_ssh');
-  assert.strictEqual(op.transport, 'ssh');
+  assert.strictEqual(op.transport, 'nats');
   assert.strictEqual(op.script_ref, HANDLER);
 });
 
@@ -120,7 +120,7 @@ test('mock transport creates parent and child runs', async () => {
   const children = db.listOperationRunChildren(out.run_id);
   assert.strictEqual(children.length, 1);
   assert.strictEqual(children[0].host, 'om-prod01');
-  assert.strictEqual(children[0].transport, 'ssh');
+  assert.strictEqual(children[0].transport, 'nats');
   assert.strictEqual(children[0].exit_code, 0);
 });
 

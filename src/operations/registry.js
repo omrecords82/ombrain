@@ -33,7 +33,7 @@ const BUILTIN_OPERATIONS = [
     handler_ref: 'fleetFindEnvFiles',
     script_ref: 'scripts/fleet/handlers/find-env-files.sh',
     spawn_mode: 'fleet_ssh',
-    transport: 'ssh',
+    transport: 'nats',
   },
 ];
 

@@ -6,6 +6,7 @@ const { resolveHost } = require('./hosts');
 const sshTransport = require('./transports/ssh');
 const natsTransport = require('./transports/nats');
 const { redactFleetResult } = require('./redact');
+const { resolveFleetTransport } = require('./natsClient');
 
 const DEFAULT_TARGETS = ['om-prod01'];
 
@@ -67,7 +68,7 @@ async function dispatchFleetOperation(opts = {}) {
     targets = DEFAULT_TARGETS,
     parentRunId,
     handlerRef,
-    transport = 'ssh',
+    transport: transportOpt,
     db,
     params = {},
     local = false,
@@ -78,8 +79,9 @@ async function dispatchFleetOperation(opts = {}) {
     throw new Error('operationId, parentRunId, and handlerRef are required');
   }
 
+  const transport = resolveFleetTransport(transportOpt);
   const transportModule = transportImpl || getTransport(transport);
-  const executeFn = local && transport === 'ssh'
+  const executeFn = local
     ? sshTransport.executeLocal
     : transportModule.execute;
 
@@ -150,7 +152,12 @@ async function dispatchFleetOperation(opts = {}) {
 
     let execOut;
     try {
-      const maybePromise = executeFn(hostConfig, handlerRef, params.env || {});
+      const maybePromise = executeFn(hostConfig, handlerRef, params.env || {}, {
+        runId: childId,
+        parentRunId,
+        operationId,
+        params,
+      });
       execOut = maybePromise && typeof maybePromise.then === 'function'
         ? await maybePromise
         : maybePromise;

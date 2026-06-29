@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const { getBuiltinOperation } = require('./registry');
 const { dispatchFleetOperation } = require('../fleet/dispatcher');
+const { resolveFleetTransport } = require('../fleet/natsClient');
 
 const FLEET_SPAWN_MODES = new Set(['fleet_ssh', 'fleet']);
 
@@ -13,7 +14,7 @@ function isFleetOperation(op) {
 }
 
 /**
- * Execute a fleet operation: parent run + per-host child runs via SSH (or stub NATS).
+ * Execute a fleet operation: parent run + per-host child runs via NATS (SSH fallback).
  *
  * @param {object} db
  * @param {string} operationId
@@ -44,7 +45,7 @@ async function runFleetOperation(db, operationId, opts = {}) {
   const runId = crypto.randomUUID();
   const triggeredBy = opts.triggered_by || 'api';
   const targets = opts.targets && opts.targets.length ? opts.targets : undefined;
-  const transport = opts.transport || op.transport || 'ssh';
+  const transport = resolveFleetTransport(opts.transport || op.transport);
   const params = {
     targets: targets || opts.targets,
     transport,
