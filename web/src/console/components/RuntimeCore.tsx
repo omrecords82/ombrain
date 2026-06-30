@@ -118,6 +118,7 @@ export default function RuntimeCore() {
       onRunDiagnostic={handleDiagnostic}
       diagnosticLoading={healthLoading}
       demoMode={false}
+      appearance="light"
     />
   );
 }

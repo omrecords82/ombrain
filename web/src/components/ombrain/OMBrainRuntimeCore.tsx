@@ -37,6 +37,8 @@ export interface OMBrainRuntimeCoreProps {
   diagnosticLoading?: boolean;
   /** Visual testing only — never enable in production overlays or Brain Console. */
   demoMode?: boolean;
+  /** Match parent shell theme; Brain Console always uses light. */
+  appearance?: 'auto' | 'light' | 'dark';
 }
 
 const STATE_TABS: RuntimeCoreState[] = [
@@ -92,6 +94,7 @@ export default function OMBrainRuntimeCore({
   onStateChange,
   diagnosticLoading = false,
   demoMode = false,
+  appearance = 'auto',
 }: OMBrainRuntimeCoreProps) {
   const resolvedSubtitle =
     subtitle
@@ -116,11 +119,28 @@ export default function OMBrainRuntimeCore({
 
   const progress = latencyProgress(latencyMs, inFlight);
   const isLive = state !== 'offline' && state !== 'error';
+  const healthTone = healthLabel?.toLowerCase().includes('online')
+    || healthLabel?.toLowerCase().includes('reachable')
+    || healthLabel?.toLowerCase().includes('healthy')
+    ? 'success'
+    : healthLabel?.toLowerCase().includes('unavailable')
+      || healthLabel?.toLowerCase().includes('offline')
+      || healthLabel?.toLowerCase().includes('error')
+      ? 'danger'
+      : undefined;
+
+  const appearanceClass =
+    appearance === 'light'
+      ? ' ombrain-runtime-core--light'
+      : appearance === 'dark'
+        ? ' ombrain-runtime-core--dark'
+        : '';
 
   return (
     <article
-      className={`ombrain-runtime-core${compact ? ' ombrain-runtime-core--compact' : ''}`}
+      className={`ombrain-runtime-core${compact ? ' ombrain-runtime-core--compact' : ''}${appearanceClass}`}
       data-state={state}
+      data-health-tone={healthTone}
       aria-label={`${title} — ${STATE_LABELS[state]}`}
     >
       <header className="ombrain-runtime-core__header">

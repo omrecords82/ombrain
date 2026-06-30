@@ -5,8 +5,11 @@
   --surface-border: rgba(148, 163, 184, 0.22);
   --text-primary: #e2e8f0;
   --text-muted: #94a3b8;
+  --text-accent: var(--core-color-soft);
   --chip-bg: rgba(255, 255, 255, 0.06);
   --chip-active-bg: rgba(255, 255, 255, 0.14);
+  --success-color: #22c55e;
+  --danger-color: #dc2626;
 
   position: relative;
   width: 100%;
@@ -28,34 +31,49 @@
   max-width: 300px;
 }
 
+/* Explicit light shell (Brain Console) — do not rely on OS color scheme alone */
+.ombrain-runtime-core--light {
+  --surface-bg: #ffffff;
+  --surface-border: rgba(148, 163, 184, 0.45);
+  --text-primary: #0f172a;
+  --text-muted: #475569;
+  --text-accent: var(--core-color-strong);
+  --chip-bg: rgba(15, 23, 42, 0.04);
+  --chip-active-bg: rgba(15, 23, 42, 0.08);
+  box-shadow:
+    0 4px 20px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 1);
+}
+
 @media (prefers-color-scheme: light) {
-  .ombrain-runtime-core {
-    --surface-bg: rgba(255, 255, 255, 0.88);
-    --surface-border: rgba(148, 163, 184, 0.35);
+  .ombrain-runtime-core:not(.ombrain-runtime-core--dark) {
+    --surface-bg: rgba(255, 255, 255, 0.96);
+    --surface-border: rgba(148, 163, 184, 0.45);
     --text-primary: #0f172a;
-    --text-muted: #64748b;
-    --chip-bg: rgba(15, 23, 42, 0.05);
-    --chip-active-bg: rgba(15, 23, 42, 0.1);
+    --text-muted: #475569;
+    --text-accent: var(--core-color-strong);
+    --chip-bg: rgba(15, 23, 42, 0.04);
+    --chip-active-bg: rgba(15, 23, 42, 0.08);
     box-shadow:
-      0 4px 20px rgba(15, 23, 42, 0.1),
-      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+      0 4px 20px rgba(15, 23, 42, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 1);
   }
 }
 
 /* State color tokens */
 .ombrain-runtime-core[data-state='idle'] {
-  --core-color: #8fbfff;
-  --core-color-soft: #dbeafe;
-  --core-color-strong: #60a5fa;
-  --core-shadow: rgba(143, 191, 255, 0.45);
-  --pulse-duration: 3.2s;
-  --ring-duration: 22s;
+  --core-color: #3b82f6;
+  --core-color-soft: #93c5fd;
+  --core-color-strong: #1d4ed8;
+  --core-shadow: rgba(59, 130, 246, 0.42);
+  --pulse-duration: 2.8s;
+  --ring-duration: 14s;
 }
 
 .ombrain-runtime-core[data-state='thinking'] {
   --core-color: #7c3aed;
-  --core-color-soft: #38bdf8;
-  --core-color-strong: #a78bfa;
+  --core-color-soft: #a78bfa;
+  --core-color-strong: #5b21b6;
   --core-shadow: rgba(124, 58, 237, 0.55);
   --pulse-duration: 1.4s;
   --ring-duration: 6s;
@@ -63,8 +81,8 @@
 
 .ombrain-runtime-core[data-state='tool'] {
   --core-color: #f59e0b;
-  --core-color-soft: #facc15;
-  --core-color-strong: #d97706;
+  --core-color-soft: #fbbf24;
+  --core-color-strong: #b45309;
   --core-shadow: rgba(245, 158, 11, 0.55);
   --pulse-duration: 1.1s;
   --ring-duration: 5s;
@@ -72,8 +90,8 @@
 
 .ombrain-runtime-core[data-state='governance'] {
   --core-color: #10b981;
-  --core-color-soft: #22d3ee;
-  --core-color-strong: #059669;
+  --core-color-soft: #34d399;
+  --core-color-strong: #047857;
   --core-shadow: rgba(16, 185, 129, 0.5);
   --pulse-duration: 2s;
   --ring-duration: 10s;
@@ -81,8 +99,8 @@
 
 .ombrain-runtime-core[data-state='success'] {
   --core-color: #22c55e;
-  --core-color-soft: #86efac;
-  --core-color-strong: #16a34a;
+  --core-color-soft: #4ade80;
+  --core-color-strong: #15803d;
   --core-shadow: rgba(34, 197, 94, 0.5);
   --pulse-duration: 2.6s;
   --ring-duration: 18s;
@@ -90,8 +108,8 @@
 
 .ombrain-runtime-core[data-state='warning'] {
   --core-color: #f97316;
-  --core-color-soft: #facc15;
-  --core-color-strong: #ea580c;
+  --core-color-soft: #fb923c;
+  --core-color-strong: #c2410c;
   --core-shadow: rgba(249, 115, 22, 0.5);
   --pulse-duration: 1.6s;
   --ring-duration: 12s;
@@ -100,7 +118,7 @@
 .ombrain-runtime-core[data-state='error'] {
   --core-color: #ef4444;
   --core-color-soft: #f87171;
-  --core-color-strong: #dc2626;
+  --core-color-strong: #b91c1c;
   --core-shadow: rgba(239, 68, 68, 0.55);
   --pulse-duration: 0.9s;
   --ring-duration: 0s;
@@ -109,11 +127,11 @@
 .ombrain-runtime-core[data-state='offline'] {
   --core-color: #64748b;
   --core-color-soft: #94a3b8;
-  --core-color-strong: #475569;
+  --core-color-strong: #334155;
   --core-shadow: rgba(100, 116, 139, 0.25);
   --pulse-duration: 4s;
   --ring-duration: 0s;
-  opacity: 0.82;
+  opacity: 0.88;
 }
 
 /* Header */
@@ -133,9 +151,9 @@
 .ombrain-runtime-core__title {
   margin: 0;
   font-size: 0.8125rem;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.03em;
-  color: var(--core-color-soft);
+  color: var(--text-primary);
 }
 
 .ombrain-runtime-core__subtitle {
@@ -153,7 +171,10 @@
   gap: 5px;
   flex-shrink: 0;
   font-size: 0.6875rem;
+  font-weight: 600;
   color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .ombrain-runtime-core__live-dot {
@@ -216,14 +237,24 @@
 
 .ombrain-runtime-core__ring--outer {
   inset: 0;
-  border: 1.5px dashed color-mix(in srgb, var(--core-color) 55%, transparent);
+  border: 2px dashed color-mix(in srgb, var(--core-color) 70%, transparent);
   animation: ombrain-ring-spin var(--ring-duration) linear infinite;
 }
 
 .ombrain-runtime-core__ring--inner {
   inset: 10px;
-  border: 1px dashed color-mix(in srgb, var(--core-color-soft) 40%, transparent);
+  border: 1.5px dashed color-mix(in srgb, var(--core-color) 55%, transparent);
   animation: ombrain-ring-spin-reverse calc(var(--ring-duration) * 1.35) linear infinite;
+}
+
+.ombrain-runtime-core--light .ombrain-runtime-core__ring--outer,
+.ombrain-runtime-core:not(.ombrain-runtime-core--dark) .ombrain-runtime-core__ring--outer {
+  border-color: color-mix(in srgb, var(--core-color) 82%, #ffffff);
+}
+
+.ombrain-runtime-core--light .ombrain-runtime-core__ring--inner,
+.ombrain-runtime-core:not(.ombrain-runtime-core--dark) .ombrain-runtime-core__ring--inner {
+  border-color: color-mix(in srgb, var(--core-color-strong) 65%, #ffffff);
 }
 
 .ombrain-runtime-core[data-state='offline'] .ombrain-runtime-core__ring,
@@ -246,9 +277,9 @@
   position: absolute;
   left: 0;
   right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--core-color-soft), transparent);
-  opacity: 0.45;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--core-color), transparent);
+  opacity: 0.55;
   animation: ombrain-scan 2.8s ease-in-out infinite;
 }
 
@@ -277,12 +308,13 @@
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 4px;
-  height: 4px;
-  margin: -2px 0 0 -2px;
+  width: 5px;
+  height: 5px;
+  margin: -2.5px 0 0 -2.5px;
   border-radius: 50%;
-  background: var(--core-color-soft);
-  opacity: 0.7;
+  background: var(--core-color);
+  opacity: 0.85;
+  box-shadow: 0 0 6px var(--core-shadow);
   animation: ombrain-particle-orbit 4s linear infinite;
 }
 
@@ -308,7 +340,7 @@
   );
   box-shadow:
     0 0 22px var(--core-shadow),
-    inset 0 -4px 12px rgba(0, 0, 0, 0.25);
+    inset 0 -4px 12px rgba(0, 0, 0, 0.2);
   animation: ombrain-core-pulse var(--pulse-duration) ease-in-out infinite;
 }
 
@@ -340,7 +372,7 @@
   height: 8px;
   margin: -4px 0 0 -4px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.9);
   box-shadow: 0 0 10px rgba(255, 255, 255, 0.6);
   animation: ombrain-core-pulse calc(var(--pulse-duration) * 0.7) ease-in-out infinite;
 }
@@ -357,9 +389,9 @@
 .ombrain-runtime-core__state-label {
   margin: 0;
   font-size: 1.125rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.2;
-  color: var(--core-color-soft);
+  color: var(--text-accent);
   text-transform: capitalize;
 }
 
@@ -372,8 +404,16 @@
 }
 
 .ombrain-runtime-core__health-value {
-  color: var(--core-color-soft);
-  font-weight: 600;
+  color: var(--text-accent);
+  font-weight: 700;
+}
+
+.ombrain-runtime-core[data-health-tone='success'] .ombrain-runtime-core__health-value {
+  color: var(--success-color);
+}
+
+.ombrain-runtime-core[data-health-tone='danger'] .ombrain-runtime-core__health-value {
+  color: var(--danger-color);
 }
 
 .ombrain-runtime-core__chips {
@@ -388,9 +428,10 @@
   gap: 4px;
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--core-color) 45%, transparent);
+  border: 1px solid color-mix(in srgb, var(--core-color) 55%, transparent);
   font-size: 0.6875rem;
-  color: var(--core-color-soft);
+  font-weight: 600;
+  color: var(--text-accent);
   background: var(--chip-bg);
 }
 
@@ -405,11 +446,13 @@
 .ombrain-runtime-core__row-label {
   color: var(--text-muted);
   flex-shrink: 0;
+  font-weight: 500;
 }
 
 .ombrain-runtime-core__row-value {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   color: var(--text-primary);
+  font-weight: 600;
   text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -418,14 +461,14 @@
 
 .ombrain-runtime-core__latency {
   font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--core-color-soft);
+  font-weight: 700;
+  color: var(--text-accent);
 }
 
 .ombrain-runtime-core__progress {
   height: 4px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--core-color) 15%, transparent);
+  background: color-mix(in srgb, var(--core-color) 20%, transparent);
   overflow: hidden;
 }
 
@@ -460,55 +503,85 @@
 
 .ombrain-runtime-core__state-tab {
   appearance: none;
-  border: none;
-  background: transparent;
+  border: 1px solid var(--surface-border);
+  background: var(--chip-bg);
   border-radius: 8px;
   padding: 6px 2px;
   font-size: 0.6rem;
   line-height: 1.2;
+  font-weight: 600;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
 }
 
 .ombrain-runtime-core__state-tab:hover:not(:disabled) {
-  background: var(--chip-bg);
+  background: var(--chip-active-bg);
   color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--core-color) 35%, transparent);
 }
 
 .ombrain-runtime-core__state-tab--active {
-  background: var(--chip-active-bg);
-  color: var(--core-color-soft);
+  background: color-mix(in srgb, var(--core-color) 14%, var(--chip-active-bg));
+  border-color: color-mix(in srgb, var(--core-color) 55%, transparent);
+  color: var(--text-accent);
   font-weight: 700;
 }
 
 .ombrain-runtime-core__state-tab:disabled {
   cursor: default;
-  opacity: 0.5;
 }
 
 .ombrain-runtime-core__diagnostic {
   width: 100%;
   appearance: none;
-  border: 1px solid color-mix(in srgb, var(--core-color) 40%, transparent);
-  background: color-mix(in srgb, var(--core-color) 12%, transparent);
-  color: var(--core-color-soft);
+  border: 1px solid var(--core-color-strong);
+  background: var(--core-color-strong);
+  color: #ffffff;
   border-radius: 8px;
-  padding: 7px 12px;
+  padding: 8px 12px;
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
+  transition: background 0.2s, border-color 0.2s, transform 0.15s ease;
 }
 
 .ombrain-runtime-core__diagnostic:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--core-color) 22%, transparent);
+  background: var(--core-color);
   border-color: var(--core-color);
+  transform: translateY(-1px);
 }
 
 .ombrain-runtime-core__diagnostic:disabled {
-  opacity: 0.55;
+  opacity: 0.65;
   cursor: wait;
+}
+
+/* Dark glass shell keeps softer diagnostic button */
+.ombrain-runtime-core:not(.ombrain-runtime-core--light) .ombrain-runtime-core__diagnostic {
+  border: 1px solid color-mix(in srgb, var(--core-color) 50%, transparent);
+  background: color-mix(in srgb, var(--core-color) 18%, transparent);
+  color: var(--core-color-soft);
+}
+
+.ombrain-runtime-core:not(.ombrain-runtime-core--light) .ombrain-runtime-core__diagnostic:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--core-color) 28%, transparent);
+  border-color: var(--core-color);
+  transform: none;
+}
+
+@media (prefers-color-scheme: light) {
+  .ombrain-runtime-core:not(.ombrain-runtime-core--dark) .ombrain-runtime-core__diagnostic {
+    border: 1px solid var(--core-color-strong);
+    background: var(--core-color-strong);
+    color: #ffffff;
+  }
+
+  .ombrain-runtime-core:not(.ombrain-runtime-core--dark) .ombrain-runtime-core__diagnostic:hover:not(:disabled) {
+    background: var(--core-color);
+    border-color: var(--core-color);
+    transform: translateY(-1px);
+  }
 }
 
 /* Keyframes */
@@ -519,7 +592,7 @@
   }
   50% {
     transform: scale(1.06);
-    opacity: 0.88;
+    opacity: 0.9;
   }
 }
 
@@ -540,8 +613,8 @@
 
 @keyframes ombrain-scan {
   0%, 100% { transform: translateY(-100%); opacity: 0; }
-  40%, 60% { opacity: 0.6; }
-  50% { transform: translateY(200%); opacity: 0.5; }
+  40%, 60% { opacity: 0.7; }
+  50% { transform: translateY(200%); opacity: 0.55; }
 }
 
 @keyframes ombrain-error-flicker {
@@ -549,22 +622,19 @@
   50% { filter: brightness(1.35) saturate(1.2); }
 }
 
-/* Reduced motion */
+/* Reduced motion — keep orb pulse hint, stop ring/particle churn */
 @media (prefers-reduced-motion: reduce) {
-  .ombrain-runtime-core *,
-  .ombrain-runtime-core *::before,
-  .ombrain-runtime-core *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
-
-  .ombrain-runtime-core__ring {
+  .ombrain-runtime-core__ring,
+  .ombrain-runtime-core__particle,
+  .ombrain-runtime-core__scan::before,
+  .ombrain-runtime-core__scan::after,
+  .ombrain-runtime-core__progress-bar--indeterminate {
     animation: none !important;
   }
 
   .ombrain-runtime-core__orb,
-  .ombrain-runtime-core__live-dot {
-    animation: none !important;
+  .ombrain-runtime-core__live-dot,
+  .ombrain-runtime-core__orb-center {
+    animation-duration: 4s !important;
   }
 }
