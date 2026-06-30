@@ -20,6 +20,7 @@
 const express = require('express');
 const { config } = require('../config');
 const breaker = require('../ai/circuitBreaker');
+const { buildLlmStatus } = require('../health/llmStatus');
 const { redactForLog } = require('../ai/redactor');
 const logger = require('../util/logger');
 const { validateWebhookSecret } = require('../governance/omstudioClient');
@@ -88,8 +89,24 @@ function createServer(deps = {}) {
   // Core
   // -------------------------------------------------------------------------
 
-  app.get('/health', (req, res) => {
+  app.get('/health', async (req, res) => {
+    const memoryBackend = db ? db.backendName() : 'none';
     const verdict = breaker.checkHost(config.llm.baseUrl, { production: config.isProduction });
+    let llm;
+    try {
+      llm = await buildLlmStatus({ memoryBackend });
+    } catch (e) {
+      logger.warn('health_llm_status_error', { name: e && e.name });
+      llm = {
+        status: 'error',
+        provider: 'unknown',
+        model: config.llm.reasoningModel || null,
+        api_key_present: false,
+        memory_backend: memoryBackend,
+        last_probe: null,
+        last_error: 'llm_status_build_failed',
+      };
+    }
     res.json({
       ok: true,
       service: 'om-brain',
@@ -97,7 +114,8 @@ function createServer(deps = {}) {
       posture: 'auditor-first (observe, analyze, explain, recommend)',
       executes_actions: false,
       node_env: config.nodeEnv,
-      memory_backend: db ? db.backendName() : 'none',
+      memory_backend: memoryBackend,
+      llm,
       llm_endpoint_allowed: verdict.allowed,
       llm_endpoint_reason: verdict.reason,
     });
@@ -202,20 +220,43 @@ function createServer(deps = {}) {
     res.json({ count: rows.length, audit: redactForLog(rows) });
   });
 
-  app.get('/governance/health', (req, res) => {
+  app.get('/governance/health', async (req, res) => {
+    const memoryBackend = db ? db.backendName() : 'none';
     const omstudioBaseUrl = config.omstudio ? config.omstudio.governanceBaseUrl : '';
     const verdict = omstudioBaseUrl
       ? breaker.checkHost(omstudioBaseUrl, { production: config.isProduction })
       : { allowed: false, reason: 'no_base_url_configured' };
     const webhookSecretConfigured = !!(process.env.OMSTUDIO_WEBHOOK_SECRET || '');
+    const llmVerdict = breaker.checkHost(config.llm.baseUrl, { production: config.isProduction });
+    let llm;
+    try {
+      llm = await buildLlmStatus({ memoryBackend });
+    } catch (e) {
+      logger.warn('governance_health_llm_status_error', { name: e && e.name });
+      llm = {
+        status: 'error',
+        provider: 'unknown',
+        model: config.llm.reasoningModel || null,
+        api_key_present: false,
+        memory_backend: memoryBackend,
+        last_probe: null,
+        last_error: 'llm_status_build_failed',
+      };
+    }
     res.json({
       ok: true,
+      service: 'om-brain',
+      executes_actions: false,
+      memory_backend: memoryBackend,
       transport: (config.omstudio && config.omstudio.transport) || 'dryrun',
       omstudio_base_url_allowed: verdict.allowed,
       omstudio_base_url_reason: verdict.reason,
       webhook_secret_configured: webhookSecretConfigured,
       event_ingest_secret_configured: !!resolveIngestSecret(),
       outbox_dir: (config.omstudio && config.omstudio.outboxDir) || './data/omstudio-outbox',
+      llm,
+      llm_endpoint_allowed: llmVerdict.allowed,
+      llm_endpoint_reason: llmVerdict.reason,
     });
   });
 
