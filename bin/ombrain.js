@@ -118,6 +118,36 @@ function formatGeneric(b) {
     .join('\n');
 }
 
+function formatOpsAuthBlock(auth) {
+  const lines = [];
+  const authState = auth.valid ? green('valid') : (auth.configured ? red(auth.reason || 'invalid') : yellow('not configured'));
+  lines.push(`  ops jwt (${auth.jwt_var || 'BRAIN_OPS_JWT'}): ${authState}`);
+  const days = auth.days_until_expiry;
+  if (auth.valid && auth.expires_at != null && days != null) {
+    if (days <= 14) {
+      lines.push(yellow(`    WARNING: expires in ${days} day(s) on ${auth.expires_at}`));
+      lines.push(dim('    Re-provision: provision-brain-ingest.sh --update-auth01'));
+    } else {
+      lines.push(`    expires: ${auth.expires_at} (${days} days remaining)`);
+    }
+  } else if (!auth.valid) {
+    if (auth.reason === 'expired' || (days != null && days < 0)) {
+      lines.push(red('    WARNING: ops JWT EXPIRED — adapters report auth_degraded'));
+      lines.push(dim('    Re-provision: provision-brain-ingest.sh --update-auth01'));
+    } else if (auth.reason === 'missing') {
+      lines.push(yellow('    WARNING: ops JWT not configured'));
+    } else if (auth.reason === 'malformed') {
+      lines.push(red('    WARNING: ops JWT malformed'));
+    } else {
+      lines.push(red(`    WARNING: ops JWT invalid (${auth.reason || 'unknown'})`));
+    }
+  } else if (auth.expires_at) {
+    lines.push(`    expires: ${auth.expires_at}`);
+  }
+  if (auth.api_base_url) lines.push(`    api: ${auth.api_base_url}`);
+  return lines;
+}
+
 function formatStatus(b) {
   const svc = b.service || 'om-brain';
   const status = b.ok ? green('ok') : red('FAIL');
@@ -133,28 +163,36 @@ function formatStatus(b) {
     lines.push(`  nats: ${natsLine}${b.nats.url_host ? ' (' + b.nats.url_host + ')' : ''}`);
   }
   if (b.ops_auth) {
-    const auth = b.ops_auth;
-    const authState = auth.valid ? green('valid') : (auth.configured ? red(auth.reason || 'invalid') : yellow('not configured'));
-    lines.push(`  ops jwt (${auth.jwt_var || 'BRAIN_OPS_JWT'}): ${authState}`);
-    if (auth.expires_at) lines.push(`    expires: ${auth.expires_at}`);
-    if (auth.api_base_url) lines.push(`    api: ${auth.api_base_url}`);
+    lines.push(...formatOpsAuthBlock(b.ops_auth));
   }
   if (b.adapters && Object.keys(b.adapters).length) {
     lines.push('  adapters:');
     for (const [name, row] of Object.entries(b.adapters)) {
       if (!row.enabled) continue;
-      const st = row.state === 'ok' ? green(row.state) : (row.state === 'auth_error' ? red(row.state) : yellow(row.state || 'unknown'));
+      const st = row.state === 'ok'
+        ? green(row.state)
+        : (row.state === 'auth_degraded' ? red(row.state) : (row.state === 'auth_error' ? red(row.state) : yellow(row.state || 'unknown')));
       const extra = row.last_status != null ? ` http=${row.last_status}` : '';
-      lines.push(`    ${name}: ${st}${extra}`);
+      const msg = row.auth_message ? ` — ${row.auth_message}` : '';
+      lines.push(`    ${name}: ${st}${extra}${msg}`);
     }
   }
   if (b.recent_auth_errors && b.recent_auth_errors.length) {
     lines.push(yellow('  recent auth errors:'));
     for (const err of b.recent_auth_errors.slice(0, 5)) {
-      lines.push(`    ${err.adapter}: ${err.last_error || 'auth_error'} (${err.last_poll_at || '?'})`);
+      const label = err.auth_message || err.last_error || err.state || 'auth_error';
+      lines.push(`    ${err.adapter}: ${label} (${err.last_poll_at || '?'})`);
     }
   }
   return lines.join('\n');
+}
+
+function opsAuthExitHint(b) {
+  const auth = b && b.ops_auth;
+  if (!auth) return 0;
+  if (!auth.valid) return 2;
+  if (auth.needs_attention || (auth.days_until_expiry != null && auth.days_until_expiry <= 14)) return 1;
+  return 0;
 }
 
 function formatHealth(b) {
@@ -1290,8 +1328,18 @@ async function main() {
       case 'health':
         return await get('/health', formatHealth);
 
-      case 'status':
-        return await get('/status', formatStatus);
+      case 'status': {
+        const { status, body } = await topoRequest('GET', '/status', null, opts);
+        if (status >= 400) die(`${status} ${(body && body.error) || ''} ${(body && body.hint) ? '(' + body.hint + ')' : ''}`.trim(), 2);
+        emit(flags, body, formatStatus);
+        if (!flags.json) {
+          const hint = opsAuthExitHint(body);
+          if (hint === 2) note('ops auth: expired or invalid — re-provision with provision-brain-ingest.sh --update-auth01');
+          else if (hint === 1) note('ops auth: expires within 14 days — schedule JWT rotation');
+          process.exitCode = hint || 0;
+        }
+        return;
+      }
 
       case 'ping': {
         const { status, body, endpoint } = await topoRequest('GET', '/health', null, { ...opts, quiet: true });

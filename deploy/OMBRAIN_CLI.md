@@ -215,13 +215,47 @@ sudo -E om-brain/deploy/provision-brain-ingest.sh --update-auth01
 
 Then verify: `ombrain status` (ops jwt: valid) and `curl -s http://127.0.0.1:8390/status | jq .adapters`.
 
+### Ops-auth expiry monitoring
+
+`BRAIN_OPS_JWT` is time-limited. The Brain surfaces expiry **without logging or returning the token**:
+
+| Surface | What it shows |
+|---------|----------------|
+| `GET /status` → `ops_auth` | `valid`, `expires_at`, `days_until_expiry`, `health`, `warning` |
+| `ombrain status` | Human warnings: healthy / near-expiry (≤14 days) / expired |
+| `om-brain-ops-auth-check.timer` | Daily journald log on auth01 (.254) at 08:00 |
+| OMAI Service Monitor | Degrades `om-brain@om-dev` when `ops_auth` needs attention |
+
+**14-day warning threshold:** CLI, `/status`, and monitors warn when `days_until_expiry ≤ 14`.
+Schedule JWT rotation before that window — typical provisioned tokens last ~90 days.
+
+**Re-provision (OMAI host):**
+
+```bash
+set -a && source /var/www/omai/.env.omai && set +a
+sudo -E om-brain/deploy/provision-brain-ingest.sh --update-auth01
+sudo systemctl restart om-brain
+```
+
+**Validation after rotation:**
+
+```bash
+curl -s http://127.0.0.1:8390/status | jq '{ops_auth, adapters}'
+ombrain status                    # exit 0 when healthy; 1 near-expiry; 2 expired
+sudo systemctl start om-brain-ops-auth-check.service
+journalctl -u om-brain-ops-auth-check -n 5 --no-pager
+```
+
+When the token is expired or missing, enabled adapters report `auth_degraded` in `/status`
+(not just HTTP 401 from the ops plane).
+
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | success |
-| 1 | usage / unknown command |
-| 2 | HTTP 4xx/5xx from a reachable Brain |
+| 1 | usage / unknown command; **`ombrain status`:** ops JWT expires within 14 days |
+| 2 | HTTP 4xx/5xx from a reachable Brain; **`ombrain status`:** ops JWT expired/invalid |
 | 3 | all endpoints unreachable (or master down for `server status`) |
 
 Use `ombrain ping` in health checks: it exits `0` only when a Brain endpoint

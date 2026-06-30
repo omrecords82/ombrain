@@ -4,7 +4,12 @@ const os = require('os');
 const { config } = require('../config');
 const { buildLlmStatus } = require('./llmStatus');
 const adapterStatus = require('./adapterStatus');
-const { assessOpsJwt } = require('../ingest/opsAuth');
+const {
+  assessOpsJwt,
+  buildOpsAuthPublicStatus,
+  opsAuthWarningMessage,
+  shouldWarnOpsAuth,
+} = require('../ingest/opsAuth');
 const { resolveFleetTransport } = require('../fleet/natsClient');
 const breaker = require('../ai/circuitBreaker');
 
@@ -43,7 +48,11 @@ async function probeNats() {
 async function buildRuntimeStatus(deps = {}) {
   const db = deps.db;
   const memoryBackend = db ? db.backendName() : 'none';
-  const jwt = assessOpsJwt(config.ingest.jwt);
+  const jwtAssessment = assessOpsJwt(config.ingest.jwt);
+  adapterStatus.setOpsAuthContext(jwtAssessment);
+  const opsAuth = buildOpsAuthPublicStatus(jwtAssessment);
+  const opsAuthWarning = opsAuthWarningMessage(jwtAssessment);
+
   const verdict = breaker.checkHost(config.llm.baseUrl, { production: config.isProduction });
   let llm;
   try {
@@ -54,11 +63,13 @@ async function buildRuntimeStatus(deps = {}) {
 
   const adapters = adapterStatus.snapshot();
   const recentAuthErrors = Object.entries(adapters)
-    .filter(([, row]) => row.state === 'auth_error')
+    .filter(([, row]) => row.state === 'auth_error' || row.state === 'auth_degraded')
     .map(([name, row]) => ({
       adapter: name,
+      state: row.state,
       last_status: row.last_status,
       last_error: row.last_error,
+      auth_message: row.auth_message || null,
       last_poll_at: row.last_poll_at,
     }));
 
@@ -88,14 +99,11 @@ async function buildRuntimeStatus(deps = {}) {
     },
     nats,
     ops_auth: {
+      ...opsAuth,
       api_base_url: config.ingest.apiBaseUrl,
       jwt_var: config.ingest.jwtVarName,
-      configured: jwt.configured,
-      valid: jwt.valid,
-      reason: jwt.reason,
-      expires_at: jwt.expires_at,
-      expires_in_sec: jwt.expires_in_sec,
-      role: jwt.role,
+      warning: opsAuthWarning,
+      needs_attention: shouldWarnOpsAuth(jwtAssessment),
     },
     adapters,
     recent_auth_errors: recentAuthErrors,

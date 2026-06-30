@@ -220,6 +220,7 @@ curl -s http://127.0.0.1:8390/decisions | jq .
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/health` | liveness, posture, memory backend, circuit-breaker verdict |
+| GET | `/status` | runtime status: adapters, NATS, `ops_auth` expiry (no JWT), degraded auth states |
 | GET | `/audit/findings?limit=N` | recent ingested (redacted) events |
 | POST | `/brain/ingest/event` | push operational events from OM / OMAI / OMStudio / Workshop (`X-OM-Webhook-Secret`) |
 | POST | `/diagnose` | analyze an incident/proposal → deterministic classification + explanation + recommendation + verification steps; writes a ledger entry; audits to OMStudio; routes human-only/Tier 0 to an approval request; `executed` is always `false` |
@@ -228,6 +229,26 @@ curl -s http://127.0.0.1:8390/decisions | jq .
 | GET | `/governance/approvals/:id` | approval detail incl. redacted append-only history |
 | POST | `/governance/approvals/:id/ingest-status` | apply an **externally-sourced** OMStudio status (live webhook target; `dryrun_sim` for tests). Cannot be used by the Brain to self-approve |
 | GET | `/governance/audit?limit=N` | recent audit events emitted to OMStudio (local mirror) |
+
+### Ops-auth expiry (ingestion adapters)
+
+Read adapters authenticate to the OMAI ops plane with `BRAIN_OPS_JWT`. The Brain
+parses only the JWT `exp` claim for monitoring — the token is never logged or
+returned on `/status`.
+
+- **`GET /status` → `ops_auth`:** `valid`, `expires_at`, `days_until_expiry` (can be negative when expired)
+- **`ombrain status`:** warns at ≤14 days; exit `1` near-expiry, `2` expired/invalid
+- **Daily check on auth01:** `om-brain-ops-auth-check.timer` (08:00) → journald
+- **OMAI Service Monitor:** `om-brain@om-dev` degrades when ops auth needs attention
+
+Re-provision on the OMAI host before expiry:
+
+```bash
+set -a && source /var/www/omai/.env.omai && set +a
+sudo -E om-brain/deploy/provision-brain-ingest.sh --update-auth01
+```
+
+See [`deploy/OMBRAIN_CLI.md`](deploy/OMBRAIN_CLI.md) for validation steps.
 
 ---
 

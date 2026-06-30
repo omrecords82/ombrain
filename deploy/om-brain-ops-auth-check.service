@@ -1,0 +1,31 @@
+# om-brain-ops-auth-check.service — daily BRAIN_OPS_JWT expiry probe.
+# Installed by deploy/deploy.sh alongside om-brain.service on auth01 (.254).
+#
+# Logs redacted warnings to journald; never prints the JWT.
+
+[Unit]
+Description=OM Brain ops-auth expiry check
+Documentation=file:/opt/om-brain/deploy/OMBRAIN_CLI.md
+After=network-online.target om-brain.service
+Wants=om-brain.service
+
+[Service]
+Type=oneshot
+User=om-brain
+Group=om-brain
+EnvironmentFile=-/etc/om-brain/om-brain.env
+Environment=OMBRAIN_STATUS_URL=http://127.0.0.1:8390/status
+ExecStart=/usr/bin/node /opt/om-brain/scripts/check-ops-auth-expiry.js
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=om-brain-ops-auth-check
+
+# Read-only: probe local /status only.
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/opt/om-brain
+
+[Install]
+WantedBy=multi-user.target

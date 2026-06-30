@@ -86,10 +86,14 @@ fi
 echo "[deploy] installing systemd slice and unit"
 install -m 0644 "${APP_DIR}/deploy/om-brain.slice"   /etc/systemd/system/om-brain.slice
 install -m 0644 "${APP_DIR}/deploy/om-brain.service" /etc/systemd/system/om-brain.service
+install -m 0644 "${APP_DIR}/deploy/om-brain-ops-auth-check.service" /etc/systemd/system/om-brain-ops-auth-check.service
+install -m 0644 "${APP_DIR}/deploy/om-brain-ops-auth-check.timer" /etc/systemd/system/om-brain-ops-auth-check.timer
 
 systemctl daemon-reload
 systemctl enable om-brain.service
+systemctl enable om-brain-ops-auth-check.timer
 systemctl restart om-brain.service
+systemctl start om-brain-ops-auth-check.service || echo "[deploy] WARNING: initial ops-auth check failed (non-fatal)"
 
 echo "[deploy] refreshing agent snapshots (HOST-SNAPSHOT, SCHEMA-SNAPSHOT)"
 if [[ -x "${APP_DIR}/deploy/post-deploy-snapshots.sh" ]]; then

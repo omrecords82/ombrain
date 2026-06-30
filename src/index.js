@@ -26,7 +26,7 @@ const { ChurchFinder } = require('./churchFinder');
 const { BtwQueue } = require('./session/btwQueue');
 const { ModeRouter } = require('./router/modeRouter');
 const { createServer } = require('./api/server');
-const { validateIngestAuthConfig } = require('./ingest/opsAuth');
+const { validateIngestAuthConfig, shouldWarnOpsAuth, opsAuthWarningMessage } = require('./ingest/opsAuth');
 const logger = require('./util/logger');
 
 function main() {
@@ -58,6 +58,14 @@ async function boot() {
       api_base_url_host: (() => {
         try { return new URL(config.ingest.apiBaseUrl).host; } catch (_) { return null; }
       })(),
+    });
+  }
+  if (shouldWarnOpsAuth(ingestAuth.jwt)) {
+    logger.warn('ops_auth_expiry_attention', {
+      health: ingestAuth.jwt.valid ? 'near_expiry' : (ingestAuth.jwt.reason || 'invalid'),
+      expires_at: ingestAuth.jwt.expires_at,
+      days_until_expiry: ingestAuth.jwt.days_until_expiry,
+      message: opsAuthWarningMessage(ingestAuth.jwt),
     });
   }
 

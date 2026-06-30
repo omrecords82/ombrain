@@ -1,0 +1,13 @@
+# om-brain-ops-auth-check.timer — run ops-auth expiry check once per day.
+# Enable: systemctl enable --now om-brain-ops-auth-check.timer
+
+[Unit]
+Description=Daily OM Brain ops-auth expiry check
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
