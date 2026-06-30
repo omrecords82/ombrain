@@ -4,7 +4,7 @@ import { Alert, Box, Stack, TextField, Typography } from '@mui/material';
 import { findChurches } from '../../api/brainApi';
 
 import { useBrainConsole } from '../BrainConsoleContext';
-import CapabilityCard from '../components/CapabilityCard';
+import CapabilityRunnerCard from '../components/CapabilityRunnerCard';
 import { PageHeading } from '../components/ConsolePanel';
 
 export default function ChurchFinderScreen() {
@@ -28,7 +28,7 @@ export default function ChurchFinderScreen() {
         </Alert>
       )}
 
-      <CapabilityCard
+      <CapabilityRunnerCard
         title="Find Orthodox Parishes"
         description="Locate parishes near a ZIP code, city, or address."
         safety="read-only"

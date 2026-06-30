@@ -14,6 +14,7 @@ const path = require('path');
 
 const activityLog = require('./activityLog');
 const { fetchOmaiProxyActivity } = require('./omaiActivity');
+const { buildBriefing } = require('./briefing');
 
 const HOST = process.env.CONSOLE_HOST || '127.0.0.1';
 const PORT = Number(process.env.CONSOLE_PORT || 8392);
@@ -219,10 +220,25 @@ brainRouter.get('/proxy-health', (_req, res) => {
   });
 });
 
-brainRouter.get('/activity', (_req, res) => {
+brainRouter.get('/activity', (req, res) => {
   const limit = req.query?.limit;
   const data = activityLog.listBrainActivity(limit);
   res.json({ ok: true, source: 'console', ...data });
+});
+
+brainRouter.get('/console/briefing', async (_req, res) => {
+  try {
+    const briefing = await buildBriefing();
+    res.json(briefing);
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: 'briefing_synthesis_failed',
+      detail: err && err.message,
+      generated_at: new Date().toISOString(),
+      overall_state: 'unknown',
+    });
+  }
 });
 
 brainRouter.get('/omai-activity', async (req, res) => {

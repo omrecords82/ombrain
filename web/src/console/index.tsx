@@ -8,12 +8,13 @@ import { Box, Button, Drawer, Stack } from '@mui/material';
 import { IconMenu2 } from '@tabler/icons-react';
 
 import { BrainConsoleProvider, useBrainConsole } from './BrainConsoleContext';
-import ConsoleHeader from './components/ConsoleHeader';
-import SidebarNav from './components/SidebarNav';
-import StatusCard from './components/StatusCard';
+import BrainConsoleHeader from './components/BrainConsoleHeader';
+import BrainNavRail from './components/BrainNavRail';
+import BrainStatusStrip from './components/BrainStatusStrip';
 import AskBrainScreen from './screens/AskBrainScreen';
 import ActionsScreen from './screens/ActionsScreen';
 import CalendarScreen from './screens/CalendarScreen';
+import CapabilitiesScreen from './screens/CapabilitiesScreen';
 import ChurchFinderScreen from './screens/ChurchFinderScreen';
 import DecisionsScreen from './screens/DecisionsScreen';
 import DiagnosticsScreen from './screens/DiagnosticsScreen';
@@ -27,7 +28,8 @@ import TheologyScreen from './screens/TheologyScreen';
 import type { SectionId } from './types';
 
 function BrainConsoleShell() {
-  const { section, setSection, statusCards, refreshHealth, refreshActivity, refreshKey } = useBrainConsole();
+  const { section, setSection, statusCards, refreshHealth, refreshActivity, refreshBriefing, refreshKey } =
+    useBrainConsole();
   const [mobileNav, setMobileNav] = useState(false);
 
   useEffect(() => {
@@ -37,6 +39,10 @@ function BrainConsoleShell() {
   useEffect(() => {
     refreshActivity();
   }, [refreshActivity]);
+
+  useEffect(() => {
+    refreshBriefing();
+  }, [refreshBriefing]);
 
   const go = (id: SectionId) => {
     setSection(id);
@@ -49,6 +55,8 @@ function BrainConsoleShell() {
         return <OverviewScreen onNavigate={go} />;
       case 'ask':
         return <AskBrainScreen />;
+      case 'capabilities':
+        return <CapabilitiesScreen onNavigate={go} />;
       case 'calendar':
         return <CalendarScreen />;
       case 'theology':
@@ -85,17 +93,17 @@ function BrainConsoleShell() {
         bgcolor: 'background.default',
       }}
     >
-      <ConsoleHeader onOpenRaw={() => go('raw')} />
+      <BrainConsoleHeader onOpenRaw={() => go('raw')} />
 
       <Box sx={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <Box
           sx={{
             display: { xs: 'none', lg: 'block' },
-            width: 240,
+            width: 232,
             flexShrink: 0,
           }}
         >
-          <SidebarNav active={section} onSelect={go} />
+          <BrainNavRail active={section} onSelect={go} />
         </Box>
 
         <Drawer
@@ -105,13 +113,13 @@ function BrainConsoleShell() {
           sx={{ display: { lg: 'none' } }}
           PaperProps={{ sx: { width: 260 } }}
         >
-          <SidebarNav active={section} onSelect={go} />
+          <BrainNavRail active={section} onSelect={go} />
         </Drawer>
 
         <Box component="main" sx={{ flex: 1, minWidth: 0, overflowY: 'auto' }}>
           <Box
             sx={{
-              maxWidth: 1280,
+              maxWidth: 1320,
               mx: 'auto',
               p: { xs: 2, sm: 3 },
             }}
@@ -126,22 +134,8 @@ function BrainConsoleShell() {
               Sections
             </Button>
 
-            <Box
-              key={refreshKey}
-              sx={{
-                display: 'grid',
-                gridTemplateColumns: {
-                  xs: '1fr 1fr',
-                  sm: 'repeat(3, 1fr)',
-                  xl: 'repeat(6, 1fr)',
-                },
-                gap: 1.5,
-                mb: 3,
-              }}
-            >
-              {statusCards.map((c) => (
-                <StatusCard key={c.id} data={c} />
-              ))}
+            <Box key={refreshKey} sx={{ mb: 3 }}>
+              <BrainStatusStrip cards={statusCards} />
             </Box>
 
             {renderScreen()}

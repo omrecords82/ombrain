@@ -19,6 +19,7 @@ import {
   formatBrainApiError,
   formatBrainReachabilityError,
   getBrainHealth,
+  getConsoleBriefing,
   getProxyHealth,
   listBrainActivity,
   listSkills,
@@ -29,6 +30,7 @@ import {
   type ProxyHealth,
 } from '../api/brainApi';
 
+import type { BriefingModel } from './briefingTypes';
 import { executeBrainCall, requestId } from './brainCall';
 import type {
   ActivityRow,
@@ -174,6 +176,10 @@ interface BrainConsoleContextValue {
   refreshActivity: () => Promise<void>;
   refreshKey: number;
   snapshot: ReturnType<typeof useOMBrainRuntime>['snapshot'];
+  briefing: BriefingModel | null;
+  briefingLoading: boolean;
+  briefingError: string | null;
+  refreshBriefing: () => Promise<void>;
 }
 
 const BrainConsoleContext = createContext<BrainConsoleContextValue | null>(null);
@@ -205,6 +211,22 @@ export function BrainConsoleProvider({
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastLatency, setLastLatency] = useState<number | null>(null);
   const [lastRuntimeCall, setLastRuntimeCall] = useState<LastRuntimeCall | null>(null);
+  const [briefing, setBriefing] = useState<BriefingModel | null>(null);
+  const [briefingLoading, setBriefingLoading] = useState(false);
+  const [briefingError, setBriefingError] = useState<string | null>(null);
+
+  const refreshBriefing = useCallback(async () => {
+    setBriefingLoading(true);
+    try {
+      const data = await getConsoleBriefing<BriefingModel>();
+      setBriefing(data);
+      setBriefingError(null);
+    } catch (err) {
+      setBriefingError(formatBrainApiError(err));
+    } finally {
+      setBriefingLoading(false);
+    }
+  }, []);
 
   const pushActivity = useCallback((row: ActivityRow) => {
     const { method, route } = parseEndpoint(row.endpoint);
@@ -403,6 +425,7 @@ export function BrainConsoleProvider({
               message: 'Health check OK',
             }),
           );
+          void refreshBriefing();
         } else {
           await runCheck();
         }
@@ -427,7 +450,7 @@ export function BrainConsoleProvider({
         }
       }
     },
-    [refreshActivity, runtime],
+    [refreshActivity, refreshBriefing, runtime],
   );
 
   const statusCards = useMemo((): StatusCardData[] => {
@@ -509,6 +532,10 @@ export function BrainConsoleProvider({
       refreshActivity,
       refreshKey,
       snapshot,
+      briefing,
+      briefingLoading,
+      briefingError,
+      refreshBriefing,
     }),
     [
       section,
@@ -529,6 +556,10 @@ export function BrainConsoleProvider({
       refreshHealth,
       refreshActivity,
       refreshKey,
+      briefing,
+      briefingLoading,
+      briefingError,
+      refreshBriefing,
     ],
   );
 

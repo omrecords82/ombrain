@@ -266,6 +266,10 @@ export function activityShowsUpstreamReachable(activity: BrainActivityRecord[]):
   });
 }
 
+export async function getConsoleBriefing<T = unknown>(): Promise<T> {
+  return brainRootGet<T>('/console/briefing');
+}
+
 export async function getBrainHealth(): Promise<BrainHealth> {
   const data = assertBrainJsonResponse<BrainHealth>(await brainRootGet<BrainHealth>('/health'), '/health');
   if (!isBrainHealthPayload(data)) {

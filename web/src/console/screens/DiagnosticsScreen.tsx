@@ -16,7 +16,7 @@ import { IconAlertTriangle, IconCircleCheck, IconRefresh } from '@tabler/icons-r
 import { brainRootPost } from '../../api/brainApi';
 
 import { useBrainConsole } from '../BrainConsoleContext';
-import CapabilityCard from '../components/CapabilityCard';
+import CapabilityRunnerCard from '../components/CapabilityRunnerCard';
 import { ConsolePanel, PageHeading } from '../components/ConsolePanel';
 import type { DiagnosticItem } from '../types';
 
@@ -166,7 +166,7 @@ export default function DiagnosticsScreen() {
             value={incidentJson}
             onChange={(e) => setIncidentJson(e.target.value)}
           />
-          <CapabilityCard
+          <CapabilityRunnerCard
             title="Diagnose incident"
             description="Structured incident analysis without LLM (use_model: false)."
             safety="diagnostic"

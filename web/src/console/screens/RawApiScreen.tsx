@@ -18,7 +18,7 @@ import { brainGet, brainPost, brainRootGet, brainRootPost, getProxyHealth } from
 
 import { useBrainConsole } from '../BrainConsoleContext';
 import { ConsolePanel, PageHeading } from '../components/ConsolePanel';
-import RecentActivity from '../components/RecentActivity';
+import RecentActivityFeed from '../components/RecentActivityFeed';
 import ResultPanel from '../components/ResultPanel';
 import type { ResultData } from '../types';
 
@@ -164,7 +164,7 @@ export default function RawApiScreen() {
       <ResultPanel result={result} emptyHint="Send a request to see the raw response." />
 
       <ConsolePanel title="Recent session calls" description="Diagnostic requests issued this session">
-        <RecentActivity rows={activity} limit={8} />
+        <RecentActivityFeed rows={activity} limit={8} />
       </ConsolePanel>
 
       <Typography variant="caption" color="text.secondary">

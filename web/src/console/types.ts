@@ -30,6 +30,7 @@ export interface LastRuntimeCall {
 export type SectionId =
   | 'overview'
   | 'ask'
+  | 'capabilities'
   | 'calendar'
   | 'theology'
   | 'churches'
@@ -62,14 +63,6 @@ export interface ActivityRow {
   safety: SafetyLevel;
 }
 
-export interface CapabilityMatrixItem {
-  id: string;
-  capability: string;
-  state: 'available' | 'partial' | 'pending' | 'blocked';
-  safety: SafetyLevel;
-  note: string;
-}
-
 export interface ResultData {
   status: 'success' | 'error' | 'pending' | 'warning';
   endpoint: string;
@@ -89,4 +82,90 @@ export interface DiagnosticItem {
   lastCheck: string;
   recommendedAction: string;
   severity: 'info' | 'warning' | 'critical';
+}
+
+export type ActionQueueSeverity = 'critical' | 'warning' | 'info';
+
+export interface ActionQueueItem {
+  id: string;
+  severity: ActionQueueSeverity;
+  title: string;
+  explanation: string;
+  recommendedAction: string;
+  buttonLabel?: string;
+  navigateTo?: SectionId;
+  safeToAct: boolean;
+}
+
+export type CapabilityCategory =
+  | 'Ask / Knowledge'
+  | 'Orthodox Calendar & Saints'
+  | 'Church Finder'
+  | 'Skills Registry'
+  | 'Actions'
+  | 'Governance'
+  | 'Diagnostics'
+  | 'Draft Work Items'
+  | 'Infrastructure Actions';
+
+export type CapabilityGate = 'Read-only' | 'Human-gated' | 'Proposal-only' | 'Executable' | 'Diagnostic';
+
+export interface CapabilityDetail {
+  id: string;
+  capability: string;
+  category: CapabilityCategory;
+  state: 'available' | 'partial' | 'pending' | 'blocked';
+  safety: SafetyLevel;
+  gate: CapabilityGate;
+  note: string;
+  lastVerified: string;
+  endpoint?: string;
+  navigateTo?: SectionId;
+  detailBullets?: string[];
+}
+
+export interface VerifiedCapabilityItem {
+  id: string;
+  title: string;
+  source: string;
+  lastVerified: string;
+}
+
+export type VerifiedCapabilityGroupName =
+  | 'Runtime'
+  | 'Knowledge'
+  | 'Governance'
+  | 'Actions'
+  | 'Fleet / Infrastructure'
+  | 'Work Items'
+  | 'Docs / Memory';
+
+export interface VerifiedCapabilityGroup {
+  group: VerifiedCapabilityGroupName;
+  items: VerifiedCapabilityItem[];
+}
+
+export type BlockerCategory = 'blocked' | 'not-built' | 'config-missing';
+
+export interface BlockerItem {
+  id: string;
+  category: BlockerCategory;
+  name: string;
+  impact: string;
+  requiredFix: string;
+  owner: string;
+  severity: 'critical' | 'warning' | 'info';
+}
+
+export interface EventDetail {
+  id: string;
+  kind: 'activity' | 'event';
+  title: string;
+  endpoint?: string;
+  actor?: string;
+  timestamp: string;
+  latencyMs?: number;
+  status?: string;
+  safety?: SafetyLevel;
+  extra?: { label: string; value: string }[];
 }

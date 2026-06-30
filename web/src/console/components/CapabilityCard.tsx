@@ -1,97 +1,88 @@
-import { useState, type ReactNode } from 'react';
-import { Box, Button, Paper, Stack, Typography } from '@mui/material';
-import { IconClock } from '@tabler/icons-react';
+import { Box, Button, Chip, Paper, Stack, Typography, alpha, useTheme } from '@mui/material';
+import { IconChevronRight } from '@tabler/icons-react';
 
-import type { ResultData, SafetyLevel } from '../types';
-import ResultPanel from './ResultPanel';
+import type { CapabilityDetail } from '../types';
 import SafetyBadge from './SafetyBadge';
 
-export interface CapabilityCardProps {
-  title: string;
-  description: string;
-  safety: SafetyLevel;
-  stateBadge?: { label: string; tone: 'available' | 'partial' | 'pending' };
-  controls: ReactNode;
-  actionLabel: string;
-  disabled?: boolean;
-  onRun: () => Promise<ResultData> | ResultData;
-}
+const STATE_COLOR: Record<CapabilityDetail['state'], 'success' | 'warning' | 'default' | 'error'> = {
+  available: 'success',
+  partial: 'warning',
+  pending: 'default',
+  blocked: 'error',
+};
 
-const stateColors = {
-  available: { color: 'success.main', border: 'success.light' },
-  partial: { color: 'warning.main', border: 'warning.light' },
-  pending: { color: 'text.secondary', border: 'divider' },
+const STATE_LABEL: Record<CapabilityDetail['state'], string> = {
+  available: 'Available',
+  partial: 'Partial',
+  pending: 'Pending',
+  blocked: 'Blocked',
 };
 
 export default function CapabilityCard({
-  title,
-  description,
-  safety,
-  stateBadge,
-  controls,
-  actionLabel,
-  disabled,
-  onRun,
-}: CapabilityCardProps) {
-  const [result, setResult] = useState<ResultData | null>(null);
-  const [running, setRunning] = useState(false);
-  const [ran, setRan] = useState<string | undefined>();
-
-  const run = async () => {
-    setRunning(true);
-    try {
-      const r = await onRun();
-      setResult(r);
-      setRan('just now');
-    } finally {
-      setRunning(false);
-    }
-  };
+  detail,
+  onOpenDetail,
+  onQuickAction,
+}: {
+  detail: CapabilityDetail;
+  onOpenDetail: (detail: CapabilityDetail) => void;
+  onQuickAction?: (detail: CapabilityDetail) => void;
+}) {
+  const theme = useTheme();
+  const stateColor = STATE_COLOR[detail.state];
 
   return (
-    <Paper variant="outlined" sx={{ overflow: 'hidden', height: '100%' }}>
-      <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
-          <Typography variant="subtitle1">{title}</Typography>
-          <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap justifyContent="flex-end">
-            {stateBadge && (
-              <Typography
-                variant="caption"
-                sx={{
-                  px: 1,
-                  py: 0.25,
-                  borderRadius: 1,
-                  border: 1,
-                  borderColor: stateColors[stateBadge.tone].border,
-                  color: stateColors[stateBadge.tone].color,
-                  fontWeight: 600,
-                }}
-              >
-                {stateBadge.label}
-              </Typography>
-            )}
-            <SafetyBadge level={safety} />
-          </Stack>
-        </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          {description}
+    <Paper
+      variant="outlined"
+      sx={{
+        p: 1.75,
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 1,
+        cursor: 'pointer',
+        transition: 'border-color 0.15s, transform 0.1s',
+        '&:hover': { borderColor: alpha(theme.palette.primary.main, 0.5) },
+      }}
+      onClick={() => onOpenDetail(detail)}
+    >
+      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+        <Typography variant="subtitle2" sx={{ lineHeight: 1.3 }}>
+          {detail.capability}
         </Typography>
-      </Box>
+        <Chip size="small" color={stateColor} label={STATE_LABEL[detail.state]} />
+      </Stack>
 
-      <Stack spacing={2} sx={{ p: 2 }}>
-        {controls}
-        <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-          <Button variant="contained" size="small" onClick={run} disabled={disabled || running}>
-            {running ? 'Running…' : actionLabel}
+      <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
+        {detail.note}
+      </Typography>
+
+      <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap alignItems="center">
+        <SafetyBadge level={detail.safety} />
+        <Chip size="small" variant="outlined" label={detail.gate} />
+      </Stack>
+
+      <Typography variant="caption" color="text.secondary">
+        Last verified: {detail.lastVerified}
+      </Typography>
+
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 'auto', pt: 0.5 }}>
+        {detail.navigateTo && onQuickAction ? (
+          <Button
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              onQuickAction(detail);
+            }}
+          >
+            Open
           </Button>
-          <Stack direction="row" alignItems="center" spacing={0.5}>
-            <IconClock size={14} />
-            <Typography variant="caption" color="text.secondary">
-              {ran ? `Last run: ${ran}` : 'Not run yet'}
-            </Typography>
-          </Stack>
+        ) : (
+          <Box />
+        )}
+        <Stack direction="row" alignItems="center" spacing={0.25} sx={{ color: 'text.secondary' }}>
+          <Typography variant="caption">Details</Typography>
+          <IconChevronRight size={14} />
         </Stack>
-        <ResultPanel result={result} emptyHint="Output preview will appear here after running." />
       </Stack>
     </Paper>
   );

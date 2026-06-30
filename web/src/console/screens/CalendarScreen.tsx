@@ -4,7 +4,7 @@ import { Box, FormControl, Grid, InputLabel, MenuItem, Select, Stack, TextField,
 import { brainGet } from '../../api/brainApi';
 
 import { useBrainConsole } from '../BrainConsoleContext';
-import CapabilityCard from '../components/CapabilityCard';
+import CapabilityRunnerCard from '../components/CapabilityRunnerCard';
 import { PageHeading } from '../components/ConsolePanel';
 
 const months = [
@@ -44,7 +44,7 @@ export default function CalendarScreen() {
 
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, lg: 6 }}>
-          <CapabilityCard
+          <CapabilityRunnerCard
             title="Pascha Date"
             description="Calculate the date of Pascha for a given year using the Orthodox paschalion."
             safety="read-only"
@@ -72,7 +72,7 @@ export default function CalendarScreen() {
         </Grid>
 
         <Grid size={{ xs: 12, lg: 6 }}>
-          <CapabilityCard
+          <CapabilityRunnerCard
             title="Today on Old Calendar"
             description="Today's liturgical context on the old calendar."
             safety="read-only"
@@ -96,7 +96,7 @@ export default function CalendarScreen() {
         </Grid>
 
         <Grid size={{ xs: 12, lg: 6 }}>
-          <CapabilityCard
+          <CapabilityRunnerCard
             title="Saints Commemorations"
             description="Find saints commemorated on a given old-calendar date."
             safety="read-only"
@@ -141,7 +141,7 @@ export default function CalendarScreen() {
         </Grid>
 
         <Grid size={{ xs: 12, lg: 6 }}>
-          <CapabilityCard
+          <CapabilityRunnerCard
             title="Fasting Calendar"
             description="Determine fasting rules and rank for a given date."
             safety="read-only"

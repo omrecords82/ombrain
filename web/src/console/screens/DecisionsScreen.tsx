@@ -6,7 +6,7 @@ import { brainRootGet } from '../../api/brainApi';
 
 import { useBrainConsole } from '../BrainConsoleContext';
 import { ConsolePanel, PageHeading } from '../components/ConsolePanel';
-import RecentActivity from '../components/RecentActivity';
+import RecentActivityFeed from '../components/RecentActivityFeed';
 import ResultPanel from '../components/ResultPanel';
 import type { ResultData } from '../types';
 
@@ -48,7 +48,7 @@ export default function DecisionsScreen() {
       <ResultPanel result={result} emptyHint="Load the decision ledger to see governed actions." />
 
       <ConsolePanel title="Recent Brain Activity" description="Persisted proxy calls (ring buffer)">
-        <RecentActivity rows={activity} />
+        <RecentActivityFeed rows={activity} />
       </ConsolePanel>
     </Stack>
   );

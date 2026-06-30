@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Box } from '@mui/material';
 
 import OMBrainRuntimeCore from '../../components/ombrain/OMBrainRuntimeCore';
 import {
@@ -10,13 +11,21 @@ import {
 
 import { useBrainConsole } from '../BrainConsoleContext';
 import { useColorMode } from '../../theme/ColorModeContext';
+import { ConsolePanel } from './ConsolePanel';
 
 const TARGET_HOST = '192.168.1.254:8390';
 
-function buildDetailRows(status: BrainRuntimeStatus | null): { label: string; value: string }[] {
-  if (!status) return [];
-
+function buildDetailRows(
+  status: BrainRuntimeStatus | null,
+  lastActionLabel: string | undefined,
+): { label: string; value: string }[] {
   const rows: { label: string; value: string }[] = [];
+
+  if (lastActionLabel) {
+    rows.push({ label: 'Last action', value: lastActionLabel });
+  }
+
+  if (!status) return rows;
 
   if (status.memory_backend) {
     rows.push({ label: 'Memory', value: String(status.memory_backend) });
@@ -44,10 +53,14 @@ function buildDetailRows(status: BrainRuntimeStatus | null): { label: string; va
     rows.push({ label: 'Host', value: String(status.hostname) });
   }
 
+  if (status.executes_actions != null) {
+    rows.push({ label: 'Mode', value: status.executes_actions ? 'executes actions' : 'auditor' });
+  }
+
   return rows;
 }
 
-export default function RuntimeCore() {
+export default function RuntimeCorePanel({ compact = false }: { compact?: boolean }) {
   const { mode } = useColorMode();
   const {
     proxyHealth,
@@ -90,7 +103,12 @@ export default function RuntimeCore() {
     ?? snapshot.environment
     ?? 'om-dev-254';
 
-  const detailRows = useMemo(() => buildDetailRows(runtimeStatus), [runtimeStatus]);
+  const lastActionLabel = lastRuntimeCall ? `${lastRuntimeCall.method} ${lastRuntimeCall.route}` : snapshot.label;
+
+  const detailRows = useMemo(
+    () => buildDetailRows(runtimeStatus, lastActionLabel),
+    [runtimeStatus, lastActionLabel],
+  );
 
   const versionLabel = runtimeStatus?.version
     ? `om-brain ${runtimeStatus.version}`
@@ -100,11 +118,9 @@ export default function RuntimeCore() {
 
   const serviceState = runtimeStatus?.state ? String(runtimeStatus.state) : undefined;
 
-  const healthLabel = statusError
-    ? 'Status unavailable'
-    : snapshot.healthLabel;
+  const healthLabel = statusError ? 'Status unavailable' : snapshot.healthLabel;
 
-  return (
+  const core = (
     <OMBrainRuntimeCore
       state={runtimeState}
       version={versionLabel}
@@ -122,5 +138,13 @@ export default function RuntimeCore() {
       demoMode={false}
       appearance={mode === 'dark' ? 'dark' : 'light'}
     />
+  );
+
+  if (compact) return <Box>{core}</Box>;
+
+  return (
+    <ConsolePanel title="Runtime Core" description="Live runtime orb — state, version, host, and last action">
+      <Box sx={{ p: 2 }}>{core}</Box>
+    </ConsolePanel>
   );
 }

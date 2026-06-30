@@ -5,7 +5,7 @@ import { IconBook } from '@tabler/icons-react';
 import { askTheology } from '../../api/brainApi';
 
 import { useBrainConsole } from '../BrainConsoleContext';
-import CapabilityCard from '../components/CapabilityCard';
+import CapabilityRunnerCard from '../components/CapabilityRunnerCard';
 import { PageHeading } from '../components/ConsolePanel';
 
 export default function TheologyScreen() {
@@ -29,7 +29,7 @@ export default function TheologyScreen() {
         <code>503 theology_disabled</code> otherwise.
       </Alert>
 
-      <CapabilityCard
+      <CapabilityRunnerCard
         title="Grounded Theology Query"
         description="Ask a theology or knowledge question against the configured corpus."
         safety="proposal-only"
