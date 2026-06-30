@@ -26,6 +26,7 @@ const { ChurchFinder } = require('./churchFinder');
 const { BtwQueue } = require('./session/btwQueue');
 const { ModeRouter } = require('./router/modeRouter');
 const { createServer } = require('./api/server');
+const { validateIngestAuthConfig } = require('./ingest/opsAuth');
 const logger = require('./util/logger');
 
 function main() {
@@ -44,6 +45,21 @@ async function boot() {
 
   const db = new MemoryDB({ dbPath: config.memory.dbPath, embeddingDim: config.memory.embeddingDim }).init();
   logger.info('memory_backend', { backend: db.backendName() });
+
+  const ingestAuth = validateIngestAuthConfig(config.ingest);
+  if (ingestAuth.issues.length) {
+    for (const issue of ingestAuth.issues) {
+      logger.warn('ingest_auth_config_issue', issue);
+    }
+  } else if (config.ingest.enableEventAdapter || config.ingest.enableInventoryAdapter) {
+    logger.info('ingest_auth_config_ok', {
+      jwt_expires_at: ingestAuth.jwt.expires_at,
+      role: ingestAuth.jwt.role,
+      api_base_url_host: (() => {
+        try { return new URL(config.ingest.apiBaseUrl).host; } catch (_) { return null; }
+      })(),
+    });
+  }
 
   const aiClient = new BrainAIClient();
   const ragRetriever = createRagRetriever({

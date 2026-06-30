@@ -21,6 +21,7 @@ const express = require('express');
 const { config } = require('../config');
 const breaker = require('../ai/circuitBreaker');
 const { buildLlmStatus } = require('../health/llmStatus');
+const { buildRuntimeStatus } = require('../health/runtimeStatus');
 const { redactForLog } = require('../ai/redactor');
 const logger = require('../util/logger');
 const { validateWebhookSecret } = require('../governance/omstudioClient');
@@ -118,7 +119,19 @@ function createServer(deps = {}) {
       llm,
       llm_endpoint_allowed: verdict.allowed,
       llm_endpoint_reason: verdict.reason,
+      port: config.http.port,
+      host: config.http.host,
     });
+  });
+
+  app.get('/status', async (req, res) => {
+    try {
+      const body = await buildRuntimeStatus({ db });
+      res.json(body);
+    } catch (e) {
+      logger.warn('status_endpoint_error', { name: e && e.name });
+      res.status(500).json({ ok: false, service: 'om-brain', error: 'status_build_failed' });
+    }
   });
 
   app.get('/audit/findings', (req, res) => {

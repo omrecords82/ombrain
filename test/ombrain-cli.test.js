@@ -50,6 +50,7 @@ test('--help documents topology + server commands', async () => {
   assert.match(r.stdout, /Topology:/);
   assert.match(r.stdout, /server add <name> <host>/);
   assert.match(r.stdout, /set-master/);
+  assert.match(r.stdout, /status/);
   assert.match(r.stdout, /skill\|skills add/);
   assert.match(r.stdout, /action\|actions list/);
   assert.match(r.stdout, /--json/);

@@ -9,14 +9,13 @@
  * talks to a running om-brain service over its REST API, so it works from ANY
  * server that can reach the Brain — no source code required on that host.
  *
- * TOPOLOGY (master / backup with per-host port pools)
+ * TOPOLOGY (master / backup with per-host API ports)
  * ---------------------------------------------------
  * ombrain talks to a *registry* of Brain servers, not a single URL. Each server
- * has a role (master | backup), a priority, and a pool of ports it listens on
- * (expressed as a range like "60000-62000" and/or a comma list). For every
- * request ombrain:
+ * has a role (master | backup), a priority, and one or more API ports (default
+ * 8390 on om-dev). For every request ombrain:
  *   1. picks the highest-priority reachable server (master first), and
- *   2. load-balances the request across that server's port pool (round-robin),
+ *   2. load-balances the request across that server's port list (round-robin),
  *      skipping dead ports, then
  *   3. fails over to the next server (backup) if the whole pool is unreachable.
  * The endpoint that actually served the request is reported on stderr.
@@ -25,8 +24,8 @@
  *   1. --url <url>           one explicit endpoint, no failover
  *   2. --server <name>       one named registry server (its pool, no host failover)
  *   3. $OMBRAIN_URL          one explicit endpoint, no failover
- *   4. the server registry   master -> backups, each across its port pool
- *   5. http://127.0.0.1:8390 last-resort default
+ *   4. the server registry   master -> backups, each across its port list
+ *   5. http://127.0.0.1:8390 last-resort default (local Brain API)
  *
  * Registry files (JSON), highest precedence first:
  *   - $OMBRAIN_SERVERS                  (explicit path)
@@ -117,6 +116,45 @@ function formatGeneric(b) {
       return `${k}: ${v}`;
     })
     .join('\n');
+}
+
+function formatStatus(b) {
+  const svc = b.service || 'om-brain';
+  const status = b.ok ? green('ok') : red('FAIL');
+  const lines = [`${bold(svc)}  ${status}`];
+  if (b.version) lines.push(`  version: ${b.version}`);
+  if (b.uptime_sec != null) lines.push(`  uptime: ${b.uptime_sec}s`);
+  if (b.bind) lines.push(`  bind: ${b.bind.host}:${b.bind.port}`);
+  if (b.api && b.api.lan) lines.push(`  lan: ${b.api.lan}`);
+  else if (b.lan_api) lines.push(`  lan: ${b.lan_api}`);
+  if (b.nats) {
+    const natsState = b.nats.state || 'unknown';
+    const natsLine = natsState === 'connected' ? green(natsState) : yellow(natsState);
+    lines.push(`  nats: ${natsLine}${b.nats.url_host ? ' (' + b.nats.url_host + ')' : ''}`);
+  }
+  if (b.ops_auth) {
+    const auth = b.ops_auth;
+    const authState = auth.valid ? green('valid') : (auth.configured ? red(auth.reason || 'invalid') : yellow('not configured'));
+    lines.push(`  ops jwt (${auth.jwt_var || 'BRAIN_OPS_JWT'}): ${authState}`);
+    if (auth.expires_at) lines.push(`    expires: ${auth.expires_at}`);
+    if (auth.api_base_url) lines.push(`    api: ${auth.api_base_url}`);
+  }
+  if (b.adapters && Object.keys(b.adapters).length) {
+    lines.push('  adapters:');
+    for (const [name, row] of Object.entries(b.adapters)) {
+      if (!row.enabled) continue;
+      const st = row.state === 'ok' ? green(row.state) : (row.state === 'auth_error' ? red(row.state) : yellow(row.state || 'unknown'));
+      const extra = row.last_status != null ? ` http=${row.last_status}` : '';
+      lines.push(`    ${name}: ${st}${extra}`);
+    }
+  }
+  if (b.recent_auth_errors && b.recent_auth_errors.length) {
+    lines.push(yellow('  recent auth errors:'));
+    for (const err of b.recent_auth_errors.slice(0, 5)) {
+      lines.push(`    ${err.adapter}: ${err.last_error || 'auth_error'} (${err.last_poll_at || '?'})`);
+    }
+  }
+  return lines.join('\n');
 }
 
 function formatHealth(b) {
@@ -745,7 +783,7 @@ async function cmdServer(rest, flags) {
 
     case 'add': {
       const [name, host] = rest.slice(1);
-      if (!name || !host) die('usage: ombrain server add <name> <host> [--ports 60000-62000] [--role master|backup] [--priority N] [--scheme http|https]');
+      if (!name || !host) die('usage: ombrain server add <name> <host> [--ports 8390] [--role master|backup] [--priority N] [--scheme http|https]');
       if (findByName(name)) die(`server "${name}" already exists (use 'server ports' or 'server remove')`);
       const role = flags.role || 'backup';
       if (role !== 'master' && role !== 'backup') die('--role must be master or backup');
@@ -754,12 +792,12 @@ async function cmdServer(rest, flags) {
         name,
         scheme: flags.scheme || 'http',
         host,
-        ports: flags.ports || '60000-62000',
+        ports: flags.ports || '8390',
         role,
         priority: Number.isFinite(flags.priority) ? flags.priority : (role === 'master' ? 0 : 10),
       });
       const p = saveRegistry(reg);
-      out(`added ${role} "${name}" -> ${host} ports ${flags.ports || '60000-62000'}  (registry: ${p})`);
+      out(`added ${role} "${name}" -> ${host} ports ${flags.ports || '8390'}  (registry: ${p})`);
       return;
     }
 
@@ -778,7 +816,7 @@ async function cmdServer(rest, flags) {
     case 'ports': {
       // ombrain server ports <name> <spec>   — replace the pool
       const [name, spec] = rest.slice(1);
-      if (!name || !spec) die('usage: ombrain server ports <name> <60000-62000|8391,8392>');
+      if (!name || !spec) die('usage: ombrain server ports <name> <8390|8391,8392>');
       const t = findByName(name);
       if (!t) die(`no server named "${name}"`);
       if (portCount(parsePortSpec(spec)) === 0) die(`invalid port spec: ${spec}`);
@@ -849,9 +887,10 @@ ${yellow('Usage:')}
   ombrain <command> [args...] [global flags]
 
 ${yellow('Topology:')}
-  ombrain talks to a registry of Brain servers (master + backups), each serving
-  a pool of ports (e.g. 60000-62000). Requests round-robin across the master's
-  port pool and fail over to backups when the master pool is unreachable.
+  Brain API listens on loopback :8390 (local) and nginx LAN edge :8390 on om-dev.
+  ombrain talks to a registry of Brain servers (master + optional backups). Each
+  host exposes one or more API ports (default 8390). Requests round-robin across
+  the master's ports and fail over to backups when unreachable.
 
 ${yellow('Global flags:')}
   --url <url>        One explicit endpoint (bypasses the registry / failover)
@@ -865,14 +904,15 @@ ${yellow('Global flags:')}
 
 ${yellow('Servers:')}
   server list                              Show the registry
-  server add <name> <host> [--ports 60000-62000] [--role master|backup]
+  server add <name> <host> [--ports 8390] [--role master|backup]
                                            [--priority N] [--scheme http|https]
   server set-master <name>                 Promote a server to master
-  server ports <name> <spec>               Replace a server's port pool
+  server ports <name> <spec>               Replace a server's port list
   server remove <name>                     Remove a server
   server status                            Probe each server's pool health
 
 ${yellow('Core:')}
+  status                         Full runtime status (adapters, NATS, ops JWT)
   ask <query...>                 Ask anything; routed by the mode router
   health | ping | classify <query...>
 
@@ -910,12 +950,13 @@ ${yellow('Teaching agent (skill/procedure proposals — no execution):')}
   teach-skill --submit <proposal.json>    Submit to Brain after validation passes
 
 ${yellow('Examples:')}
-  ombrain server add master 192.168.1.254 --ports 60000-62000 --role master
-  ombrain server add backup1 192.168.1.239 --ports 60000-62000 --role backup
+  ombrain server add master 192.168.1.254 --ports 8390 --role master
+  ombrain server add backup1 192.168.1.239 --ports 8390 --role backup
+  ombrain status
   ombrain server status
   ombrain pascha 2026
   ombrain ask "what is theosis" --session demo-1
-  ombrain --url http://127.0.0.1:60000 health
+  ombrain --url http://127.0.0.1:8390 health
   ombrain skill add --file ./scripts/hello.sh --key echo-test
   ombrain skills run echo-test --commit
   ombrain actions list
@@ -1248,6 +1289,9 @@ async function main() {
     switch (cmd) {
       case 'health':
         return await get('/health', formatHealth);
+
+      case 'status':
+        return await get('/status', formatStatus);
 
       case 'ping': {
         const { status, body, endpoint } = await topoRequest('GET', '/health', null, { ...opts, quiet: true });

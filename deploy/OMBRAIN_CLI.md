@@ -9,11 +9,12 @@ directly and therefore only works from inside the source tree on the Brain host.
 
 ---
 
-## Topology: master / backup with per-host port pools
+## Topology: master / backup with per-host API ports
 
 `ombrain` does not talk to a single URL. It reads a **server registry** describing
-a master Brain host plus optional backups, where **each host serves a pool of
-ports** (e.g. `60000-62000`). For every request it:
+a master Brain host plus optional backups. Each host exposes one or more API ports
+(**default `8390`** on om-dev; legacy `60000-62000` pools are no longer used).
+For every request it:
 
 1. selects the highest-priority reachable server (**master first**, then backups
    by ascending `priority`);
@@ -43,15 +44,16 @@ Example:
   "version": 1,
   "rr": 0,
   "servers": [
-    { "name": "master",  "scheme": "http", "host": "192.168.1.254", "ports": "60000-62000", "role": "master", "priority": 0 },
-    { "name": "backup1", "scheme": "http", "host": "192.168.1.239", "ports": "60000-62000", "role": "backup", "priority": 10 }
+    { "name": "master",  "scheme": "http", "host": "192.168.1.254", "ports": "8390", "role": "master", "priority": 0 },
+    { "name": "backup1", "scheme": "http", "host": "192.168.1.239", "ports": "8390", "role": "backup", "priority": 10 }
   ]
 }
 ```
 
-`ports` accepts ranges and lists: `"60000-62000"`, `"8391,8392"`, or a mix
-`"8391,60000-60010"`. The `rr` field is the persisted round-robin cursor; the CLI
-advances it so successive invocations spread load across the pool.
+`ports` accepts a single port or comma list: `"8390"`, `"8391,8392"`. Legacy
+ranges like `"60000-62000"` are still parsed but not used in current deployments.
+The `rr` field is the persisted round-robin cursor; the CLI advances it so
+successive invocations spread load across multiple ports when configured.
 
 ### Endpoint resolution precedence
 
@@ -70,7 +72,7 @@ advances it so successive invocations spread load across the pool.
 ```bash
 cd /opt/om-brain
 sudo bash deploy/install-ombrain.sh \
-  --register-master 192.168.1.254 --ports 60000-62000
+  --register-master 192.168.1.254 --ports 8390
 ombrain server status
 ```
 
@@ -79,7 +81,7 @@ ombrain server status
 ```bash
 scp /opt/om-brain/bin/ombrain.js /opt/om-brain/deploy/install-ombrain.sh root@HOST:/tmp/
 ssh root@HOST 'sudo bash /tmp/install-ombrain.sh --standalone /tmp/ombrain.js \
-  --register-master 192.168.1.254 --register-backup 192.168.1.239 --ports 60000-62000'
+  --register-master 192.168.1.254 --register-backup 192.168.1.239 --ports 8390'
 ```
 
 Installer options of note:
@@ -88,7 +90,7 @@ Installer options of note:
 |--------|---------|
 | `--register-master <host>` | Seed the registry master host |
 | `--register-backup <host>` | Add a backup (repeatable) |
-| `--ports <spec>` | Port pool for seeded hosts (default `60000-62000`) |
+| `--ports <spec>` | Port list for seeded hosts (default `8390`) |
 | `--standalone <file>` | Install a copy of `ombrain.js` (remote hosts) |
 | `--url <url>` | Bake a default `OMBRAIN_URL` into `/etc/om-brain/ombrain.conf` |
 | `--node <path>` | Explicit node path (sudo PATH safety) |
@@ -101,8 +103,8 @@ Installer options of note:
 
 ```bash
 ombrain server list
-ombrain server add master  192.168.1.254 --ports 60000-62000 --role master
-ombrain server add backup1 192.168.1.239 --ports 60000-62000 --role backup --priority 10
+ombrain server add master  192.168.1.254 --ports 8390 --role master
+ombrain server add backup1 192.168.1.239 --ports 8390 --role backup --priority 10
 ombrain server set-master backup1        # promote (demotes the old master)
 ombrain server ports master 60000-61000  # replace a pool
 ombrain server remove backup1
@@ -115,6 +117,7 @@ ombrain server status                     # probe each host's pool health
 
 ```text
 Core
+  ombrain status                         Runtime status (adapters, NATS, ops JWT)
   ombrain ask <query...>                 Ask anything; routed by the mode router
   ombrain health                         Service health (plain text; --json for full object)
   ombrain ping                           Health as a script check (exit 0/3)
@@ -170,7 +173,7 @@ ombrain saints 12 6 old 2026              # St. Nicholas -> Dec 19 N.S.
 ombrain ask "what is theosis"             # mode: study + answer text
 ombrain ask "fleet health status"        # mode: technical + answer text
 ombrain ask "restart nginx" --mode ops    # routed to governance, not executed
-ombrain --url http://127.0.0.1:60000 health   # one explicit port, no failover
+ombrain --url http://127.0.0.1:8390 health   # one explicit port, no failover
 ombrain --server backup1 health           # target one named host's pool
 ombrain skill add --file ./scripts/hello.sh --key echo-test
 ombrain skills run echo-test --commit
@@ -183,11 +186,34 @@ ombrain actions resolve "check full system status"
 
 ## Network note
 
-The Brain API binds to loopback by design. From the Brain host itself the pool is
-directly reachable. From other hosts you need the pool reachable over the LAN
-(bind/reverse-proxy the port range) or an SSH tunnel, then point `ombrain` at it
-via the registry (`server add`) or `--url`. Use `ombrain server status` to confirm
-reachability before relying on failover.
+The Brain API binds to loopback `:8390` by design. Nginx on om-dev exposes the
+LAN edge at `http://192.168.1.254:8390`. From the Brain host itself use
+`http://127.0.0.1:8390`; from other LAN hosts use the registry (`server add`) or
+`--url http://192.168.1.254:8390`. Use `ombrain status` or `ombrain server status`
+to confirm reachability.
+
+### Required env vars (om-brain.service)
+
+| Variable | Purpose |
+|----------|---------|
+| `BRAIN_HTTP_PORT` | Local API port (default `8390`) |
+| `BRAIN_LAN_API_URL` | LAN edge URL shown in `/status` (e.g. `http://192.168.1.254:8390`) |
+| `OM_API_BASE_URL` | OMAI ops plane for read adapters (e.g. `http://192.168.1.239:7060`) |
+| `BRAIN_OPS_JWT` | Bearer JWT for `brain_ingest` role (provision via `deploy/provision-brain-ingest.sh`) |
+| `NATS_URL` | Fleet transport broker (e.g. `nats://192.168.1.254:4222`) |
+
+### 401 troubleshooting
+
+Repeated `inventory_adapter_non_ok status:401` or `event_adapter_non_ok … status:401`
+in `journalctl -u om-brain` almost always means `BRAIN_OPS_JWT` is missing, expired,
+or signed with the wrong secret. Re-provision on the OMAI host:
+
+```bash
+set -a && source /var/www/omai/.env.omai && set +a
+sudo -E om-brain/deploy/provision-brain-ingest.sh --update-auth01
+```
+
+Then verify: `ombrain status` (ops jwt: valid) and `curl -s http://127.0.0.1:8390/status | jq .adapters`.
 
 ## Exit codes
 

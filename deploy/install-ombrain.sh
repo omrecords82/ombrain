@@ -28,7 +28,7 @@
 #   --url <url>             Bake a default OMBRAIN_URL into /etc/om-brain/ombrain.conf
 #   --register-master <h>   Seed the server registry with master host <h>
 #   --register-backup <h>   Seed/append a backup host <h> (repeatable)
-#   --ports <spec>          Port pool for the seeded host(s) (default 60000-62000)
+#   --ports <spec>          Port list for the seeded host(s) (default 8390)
 #   --uninstall             Remove the installed command
 #   -h, --help              Show help
 #
@@ -43,7 +43,7 @@ NODE_BIN=""
 DEFAULT_URL=""
 REGISTER_MASTER=""
 REGISTER_BACKUPS=()
-PORTS_SPEC="60000-62000"
+PORTS_SPEC="8390"
 UNINSTALL=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

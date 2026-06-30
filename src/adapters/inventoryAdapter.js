@@ -11,6 +11,7 @@
 const { config } = require('../config');
 const { redactForLog } = require('../ai/redactor');
 const { computeFleetHealthFromSummary, diffHostStatuses } = require('../util/platformHealth');
+const adapterStatus = require('../health/adapterStatus');
 const logger = require('../util/logger');
 
 class InventoryAdapter {
@@ -79,6 +80,7 @@ class InventoryAdapter {
       }
       const res = await this.fetch(this._url(), { headers: this._headers() });
       if (!res.ok) {
+        adapterStatus.recordPoll('inventory', { ok: false, status: res.status });
         logger.warn('inventory_adapter_non_ok', { status: res.status });
         return;
       }
@@ -97,15 +99,18 @@ class InventoryAdapter {
           correlation: null,
           payload_json: JSON.stringify(safe),
         });
+      adapterStatus.recordPoll('inventory', { ok: true, status: res.status });
       logger.info('inventory_adapter_ingested', {
         health_score: computeFleetHealthFromSummary(data.summary).score,
       });
     } catch (e) {
+      adapterStatus.recordPoll('inventory', { ok: false, error: e && e.name });
       logger.warn('inventory_adapter_error', { name: e && e.name });
     }
   }
 
   start() {
+    adapterStatus.setEnabled('inventory', this.cfg.enableInventoryAdapter);
     if (!this.cfg.enableInventoryAdapter) {
       logger.info('inventory_adapter_disabled');
       return;

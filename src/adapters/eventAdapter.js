@@ -11,6 +11,7 @@
 
 const { config } = require('../config');
 const { redactForLog } = require('../ai/redactor');
+const adapterStatus = require('../health/adapterStatus');
 const logger = require('../util/logger');
 
 class EventAdapter {
@@ -49,6 +50,7 @@ class EventAdapter {
       }
       const res = await this.fetch(url, { headers: this._headers() });
       if (!res.ok) {
+        adapterStatus.recordPoll(source, { ok: false, status: res.status });
         // 401/403/404/5xx — redacted error, continue (no crash loop).
         logger.warn('event_adapter_non_ok', { source, status: res.status });
         return;
@@ -67,14 +69,18 @@ class EventAdapter {
             payload_json: JSON.stringify(safe),
           });
       }
+      adapterStatus.recordPoll(source, { ok: true, status: res.status });
       logger.info('event_adapter_ingested', { source, count: items.length });
     } catch (e) {
+      adapterStatus.recordPoll(source, { ok: false, error: e && e.name });
       // Network/parse errors are swallowed (redacted) — keep running.
       logger.warn('event_adapter_error', { source, name: e && e.name });
     }
   }
 
   start() {
+    adapterStatus.setEnabled('events', this.cfg.enableEventAdapter);
+    adapterStatus.setEnabled('deploy_runs', this.cfg.enableEventAdapter);
     if (!this.cfg.enableEventAdapter) {
       logger.info('event_adapter_disabled');
       return;
