@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 
+import RuntimeCoreVisual from './RuntimeCoreVisual';
 import './OMBrainRuntimeCore.css';
 
 export type RuntimeCoreState =
@@ -155,32 +156,7 @@ export default function OMBrainRuntimeCore({
       </header>
 
       <div className="ombrain-runtime-core__body">
-        <div className="ombrain-runtime-core__orb-zone" aria-hidden="true">
-          <div className="ombrain-runtime-core__ring ombrain-runtime-core__ring--outer" />
-          <div className="ombrain-runtime-core__ring ombrain-runtime-core__ring--inner" />
-          <div className="ombrain-runtime-core__scan" />
-          <div className="ombrain-runtime-core__particles">
-            <span className="ombrain-runtime-core__particle" />
-            <span className="ombrain-runtime-core__particle" />
-            <span className="ombrain-runtime-core__particle" />
-          </div>
-          <div className="ombrain-runtime-core__orb">
-            <svg className="ombrain-runtime-core__orb-neural" viewBox="0 0 60 60" aria-hidden="true">
-              <circle cx="30" cy="30" r="3" fill="rgba(255,255,255,0.5)" />
-              <circle cx="18" cy="22" r="2" fill="rgba(255,255,255,0.35)" />
-              <circle cx="42" cy="24" r="2" fill="rgba(255,255,255,0.35)" />
-              <circle cx="24" cy="40" r="2" fill="rgba(255,255,255,0.3)" />
-              <circle cx="38" cy="38" r="2" fill="rgba(255,255,255,0.3)" />
-              <path
-                d="M30 30 L18 22 M30 30 L42 24 M30 30 L24 40 M30 30 L38 38"
-                stroke="rgba(255,255,255,0.25)"
-                strokeWidth="0.75"
-                fill="none"
-              />
-            </svg>
-            <span className="ombrain-runtime-core__orb-center" />
-          </div>
-        </div>
+        <RuntimeCoreVisual state={state} compact={compact} />
 
         <div className="ombrain-runtime-core__meta">
           <p className="ombrain-runtime-core__state-label">{STATE_LABELS[state]}</p>

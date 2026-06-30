@@ -205,178 +205,6 @@
   gap: 12px;
 }
 
-/* Orb zone */
-.ombrain-runtime-core__orb-zone {
-  position: relative;
-  width: 96px;
-  height: 96px;
-  flex-shrink: 0;
-  margin: 0 auto;
-}
-
-.ombrain-runtime-core--compact .ombrain-runtime-core__orb-zone {
-  width: 80px;
-  height: 80px;
-}
-
-.ombrain-runtime-core__orb-zone:hover .ombrain-runtime-core__ring--outer {
-  animation-duration: calc(var(--ring-duration) * 0.65);
-}
-
-.ombrain-runtime-core__orb-zone:hover .ombrain-runtime-core__orb {
-  box-shadow:
-    0 0 28px var(--core-shadow),
-    0 0 48px color-mix(in srgb, var(--core-shadow) 60%, transparent);
-}
-
-.ombrain-runtime-core__ring {
-  position: absolute;
-  border-radius: 50%;
-  pointer-events: none;
-}
-
-.ombrain-runtime-core__ring--outer {
-  inset: 0;
-  border: 2px dashed color-mix(in srgb, var(--core-color) 70%, transparent);
-  animation: ombrain-ring-spin var(--ring-duration) linear infinite;
-}
-
-.ombrain-runtime-core__ring--inner {
-  inset: 10px;
-  border: 1.5px dashed color-mix(in srgb, var(--core-color) 55%, transparent);
-  animation: ombrain-ring-spin-reverse calc(var(--ring-duration) * 1.35) linear infinite;
-}
-
-.ombrain-runtime-core--light .ombrain-runtime-core__ring--outer,
-.ombrain-runtime-core:not(.ombrain-runtime-core--dark) .ombrain-runtime-core__ring--outer {
-  border-color: color-mix(in srgb, var(--core-color) 82%, #ffffff);
-}
-
-.ombrain-runtime-core--light .ombrain-runtime-core__ring--inner,
-.ombrain-runtime-core:not(.ombrain-runtime-core--dark) .ombrain-runtime-core__ring--inner {
-  border-color: color-mix(in srgb, var(--core-color-strong) 65%, #ffffff);
-}
-
-.ombrain-runtime-core[data-state='offline'] .ombrain-runtime-core__ring,
-.ombrain-runtime-core[data-state='error'] .ombrain-runtime-core__ring {
-  animation: none;
-  opacity: 0.35;
-}
-
-.ombrain-runtime-core__scan {
-  position: absolute;
-  inset: 6px;
-  border-radius: 50%;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.ombrain-runtime-core__scan::before,
-.ombrain-runtime-core__scan::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--core-color), transparent);
-  opacity: 0.55;
-  animation: ombrain-scan 2.8s ease-in-out infinite;
-}
-
-.ombrain-runtime-core__scan::after {
-  animation-delay: 1.4s;
-  transform: rotate(90deg);
-  transform-origin: center;
-  top: 50%;
-  left: -50%;
-  right: -50%;
-  width: 200%;
-}
-
-.ombrain-runtime-core[data-state='offline'] .ombrain-runtime-core__scan {
-  display: none;
-}
-
-/* Particles */
-.ombrain-runtime-core__particles {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.ombrain-runtime-core__particle {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 5px;
-  height: 5px;
-  margin: -2.5px 0 0 -2.5px;
-  border-radius: 50%;
-  background: var(--core-color);
-  opacity: 0.85;
-  box-shadow: 0 0 6px var(--core-shadow);
-  animation: ombrain-particle-orbit 4s linear infinite;
-}
-
-.ombrain-runtime-core__particle:nth-child(1) { animation-delay: 0s; --orbit-r: 38px; --orbit-start: 0deg; }
-.ombrain-runtime-core__particle:nth-child(2) { animation-delay: -1.3s; --orbit-r: 42px; --orbit-start: 120deg; }
-.ombrain-runtime-core__particle:nth-child(3) { animation-delay: -2.6s; --orbit-r: 36px; --orbit-start: 240deg; }
-
-.ombrain-runtime-core[data-state='offline'] .ombrain-runtime-core__particles,
-.ombrain-runtime-core[data-state='error'] .ombrain-runtime-core__particles {
-  opacity: 0.2;
-}
-
-/* Central orb */
-.ombrain-runtime-core__orb {
-  position: absolute;
-  inset: 18px;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 32% 28%,
-    var(--core-color-soft) 0%,
-    var(--core-color) 42%,
-    var(--core-color-strong) 88%
-  );
-  box-shadow:
-    0 0 22px var(--core-shadow),
-    inset 0 -4px 12px rgba(0, 0, 0, 0.2);
-  animation: ombrain-core-pulse var(--pulse-duration) ease-in-out infinite;
-}
-
-.ombrain-runtime-core[data-state='error'] .ombrain-runtime-core__orb {
-  animation: ombrain-core-pulse var(--pulse-duration) ease-in-out infinite,
-    ombrain-error-flicker 1.2s steps(2, end) infinite;
-}
-
-.ombrain-runtime-core[data-state='offline'] .ombrain-runtime-core__orb {
-  animation: none;
-  filter: saturate(0.35);
-  opacity: 0.55;
-}
-
-.ombrain-runtime-core__orb-neural {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0.35;
-  pointer-events: none;
-}
-
-.ombrain-runtime-core__orb-center {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 8px;
-  height: 8px;
-  margin: -4px 0 0 -4px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 0 10px rgba(255, 255, 255, 0.6);
-  animation: ombrain-core-pulse calc(var(--pulse-duration) * 0.7) ease-in-out infinite;
-}
-
 /* Meta panel */
 .ombrain-runtime-core__meta {
   flex: 1;
@@ -481,7 +309,7 @@
 
 .ombrain-runtime-core__progress-bar--indeterminate {
   width: 40% !important;
-  animation: ombrain-scan 1.2s ease-in-out infinite;
+  animation: ombrain-progress-indeterminate 1.2s ease-in-out infinite;
 }
 
 /* Footer: state chips + diagnostic */
@@ -584,7 +412,6 @@
   }
 }
 
-/* Keyframes */
 @keyframes ombrain-core-pulse {
   0%, 100% {
     transform: scale(1);
@@ -596,45 +423,18 @@
   }
 }
 
-@keyframes ombrain-ring-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-@keyframes ombrain-ring-spin-reverse {
-  from { transform: rotate(360deg); }
-  to { transform: rotate(0deg); }
-}
-
-@keyframes ombrain-particle-orbit {
-  from { transform: rotate(var(--orbit-start, 0deg)) translateX(var(--orbit-r, 38px)) rotate(calc(-1 * var(--orbit-start, 0deg))); }
-  to { transform: rotate(calc(var(--orbit-start, 0deg) + 360deg)) translateX(var(--orbit-r, 38px)) rotate(calc(-1 * (var(--orbit-start, 0deg) + 360deg))); }
-}
-
-@keyframes ombrain-scan {
+@keyframes ombrain-progress-indeterminate {
   0%, 100% { transform: translateY(-100%); opacity: 0; }
   40%, 60% { opacity: 0.7; }
   50% { transform: translateY(200%); opacity: 0.55; }
 }
 
-@keyframes ombrain-error-flicker {
-  0%, 100% { filter: brightness(1); }
-  50% { filter: brightness(1.35) saturate(1.2); }
-}
-
-/* Reduced motion — keep orb pulse hint, stop ring/particle churn */
 @media (prefers-reduced-motion: reduce) {
-  .ombrain-runtime-core__ring,
-  .ombrain-runtime-core__particle,
-  .ombrain-runtime-core__scan::before,
-  .ombrain-runtime-core__scan::after,
   .ombrain-runtime-core__progress-bar--indeterminate {
     animation: none !important;
   }
 
-  .ombrain-runtime-core__orb,
-  .ombrain-runtime-core__live-dot,
-  .ombrain-runtime-core__orb-center {
+  .ombrain-runtime-core__live-dot {
     animation-duration: 4s !important;
   }
 }
