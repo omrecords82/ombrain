@@ -93,6 +93,7 @@ systemctl daemon-reload
 systemctl enable om-brain.service
 systemctl enable om-brain-ops-auth-check.timer
 systemctl restart om-brain.service
+sleep 3
 systemctl start om-brain-ops-auth-check.service || echo "[deploy] WARNING: initial ops-auth check failed (non-fatal)"
 
 echo "[deploy] refreshing agent snapshots (HOST-SNAPSHOT, SCHEMA-SNAPSHOT)"
