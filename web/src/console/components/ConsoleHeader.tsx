@@ -1,0 +1,167 @@
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  Stack,
+  Typography,
+  alpha,
+  useTheme,
+} from '@mui/material';
+import {
+  IconBrain,
+  IconNetwork,
+  IconRefresh,
+  IconServer,
+  IconShield,
+  IconTerminal,
+} from '@tabler/icons-react';
+
+import { deriveFleetEnvironment } from '../../api/brainApi';
+
+import { useBrainConsole } from '../BrainConsoleContext';
+
+function MetaBadge({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof IconServer;
+  label: string;
+  value: string;
+}) {
+  return (
+    <Chip
+      size="small"
+      variant="outlined"
+      icon={<Icon size={14} />}
+      label={
+        <span>
+          <Typography component="span" variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+            {label}
+          </Typography>
+          <Typography component="span" variant="caption" fontWeight={600}>
+            {value}
+          </Typography>
+        </span>
+      }
+    />
+  );
+}
+
+export default function ConsoleHeader({
+  onOpenRaw,
+}: {
+  onOpenRaw: () => void;
+}) {
+  const theme = useTheme();
+  const { proxyHealth, brainHealth, healthLoading, lastChecked, refreshHealth } = useBrainConsole();
+
+  const proxyOk = proxyHealth?.ok === true;
+  const upstreamOk = brainHealth?.ok !== false;
+  const healthLabel = proxyOk && upstreamOk ? 'Online' : proxyOk ? 'Degraded' : 'Offline';
+  const healthColor = proxyOk && upstreamOk ? 'success' : proxyOk ? 'warning' : 'error';
+
+  return (
+    <Box
+      sx={{
+        borderBottom: 1,
+        borderColor: 'divider',
+        px: { xs: 2, sm: 3 },
+        py: 2,
+        bgcolor: alpha(theme.palette.background.paper, 0.8),
+        backdropFilter: 'blur(8px)',
+      }}
+    >
+      <Stack
+        direction={{ xs: 'column', lg: 'row' }}
+        alignItems={{ lg: 'center' }}
+        justifyContent="space-between"
+        spacing={2}
+      >
+        <Stack direction="row" spacing={1.5} alignItems="flex-start">
+          <Box
+            sx={{
+              width: 40,
+              height: 40,
+              borderRadius: 1,
+              bgcolor: 'primary.main',
+              color: 'primary.contrastText',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <IconBrain size={20} />
+          </Box>
+          <Box>
+            <Typography variant="h4" sx={{ lineHeight: 1.2 }}>
+              OMBrain Command Console
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Runtime capabilities, skill registry, diagnostics, and governed brain actions
+            </Typography>
+          </Box>
+        </Stack>
+
+        <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap>
+          <Chip
+            size="small"
+            color={healthColor}
+            label={
+              <Stack direction="row" alignItems="center" spacing={0.75}>
+                <Box
+                  sx={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    bgcolor: `${healthColor}.main`,
+                    animation: healthLoading ? 'pulse 1.5s infinite' : undefined,
+                  }}
+                />
+                <span>{healthLabel}</span>
+              </Stack>
+            }
+          />
+          {lastChecked && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' } }}>
+              Last checked {lastChecked}
+            </Typography>
+          )}
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={healthLoading ? <CircularProgress size={14} /> : <IconRefresh size={16} />}
+            onClick={() => refreshHealth({ manual: true })}
+            disabled={healthLoading}
+          >
+            Refresh
+          </Button>
+          <Button variant="contained" size="small" startIcon={<IconTerminal size={16} />} onClick={onOpenRaw}>
+            Open Raw API
+          </Button>
+        </Stack>
+      </Stack>
+
+      <Alert severity="info" sx={{ mt: 2, py: 0.5 }}>
+        Routes under <code>/brain/*</code> on om-dev are called as <code>/api/brain/brain/*</code> through OMAI.
+        Requires <strong>super_admin</strong> session.
+      </Alert>
+
+      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
+        <MetaBadge
+          icon={IconServer}
+          label="env"
+          value={proxyHealth?.fleet_environment ?? deriveFleetEnvironment(proxyHealth?.brain_endpoint)}
+        />
+        <MetaBadge icon={IconNetwork} label="proxy" value="OMAI /api/brain/*" />
+        <MetaBadge icon={IconShield} label="session" value="super_admin" />
+        {proxyHealth?.brain_endpoint && (
+          <MetaBadge icon={IconServer} label="upstream" value={String(proxyHealth.brain_endpoint)} />
+        )}
+      </Stack>
+    </Box>
+  );
+}
