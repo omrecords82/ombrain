@@ -4,21 +4,26 @@ import {
   Button,
   Chip,
   CircularProgress,
+  IconButton,
   Stack,
+  Tooltip,
   Typography,
   alpha,
   useTheme,
 } from '@mui/material';
 import {
   IconBrain,
+  IconMoon,
   IconNetwork,
   IconRefresh,
   IconServer,
   IconShield,
+  IconSun,
   IconTerminal,
 } from '@tabler/icons-react';
 
 import { deriveFleetEnvironment } from '../../api/brainApi';
+import { useColorMode } from '../../theme/ColorModeContext';
 
 import { useBrainConsole } from '../BrainConsoleContext';
 
@@ -56,6 +61,7 @@ export default function ConsoleHeader({
   onOpenRaw: () => void;
 }) {
   const theme = useTheme();
+  const { mode, toggleColorMode } = useColorMode();
   const { proxyHealth, brainHealth, healthLoading, lastChecked, refreshHealth } = useBrainConsole();
 
   const proxyOk = proxyHealth?.ok === true;
@@ -139,6 +145,20 @@ export default function ConsoleHeader({
           >
             Refresh
           </Button>
+          <Tooltip title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+            <IconButton
+              size="small"
+              onClick={toggleColorMode}
+              aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              sx={{
+                border: 1,
+                borderColor: 'divider',
+                borderRadius: 1,
+              }}
+            >
+              {mode === 'dark' ? <IconSun size={18} /> : <IconMoon size={18} />}
+            </IconButton>
+          </Tooltip>
           <Button variant="contained" size="small" startIcon={<IconTerminal size={16} />} onClick={onOpenRaw}>
             Open Raw API
           </Button>

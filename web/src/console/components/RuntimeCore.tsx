@@ -9,6 +9,7 @@ import {
 } from '../../api/brainApi';
 
 import { useBrainConsole } from '../BrainConsoleContext';
+import { useColorMode } from '../../theme/ColorModeContext';
 
 const TARGET_HOST = '192.168.1.254:8390';
 
@@ -47,6 +48,7 @@ function buildDetailRows(status: BrainRuntimeStatus | null): { label: string; va
 }
 
 export default function RuntimeCore() {
+  const { mode } = useColorMode();
   const {
     proxyHealth,
     healthLoading,
@@ -118,7 +120,7 @@ export default function RuntimeCore() {
       onRunDiagnostic={handleDiagnostic}
       diagnosticLoading={healthLoading}
       demoMode={false}
-      appearance="light"
+      appearance={mode === 'dark' ? 'dark' : 'light'}
     />
   );
 }

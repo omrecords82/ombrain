@@ -164,7 +164,7 @@ export default function ResultPanel({
           Raw JSON
         </Button>
         <Collapse in={showJson}>
-          <Box sx={{ borderTop: 1, borderColor: 'divider', bgcolor: alpha(theme.palette.common.black, 0.04) }}>
+          <Box sx={{ borderTop: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
             <Stack direction="row" justifyContent="flex-end" sx={{ p: 1 }}>
               <Tooltip title={copied ? 'Copied' : 'Copy JSON'}>
                 <IconButton size="small" onClick={copy}>
