@@ -774,6 +774,20 @@ function parseArgs(argv) {
     else if (a.startsWith('--limit=')) { flags.limit = parseInt(a.slice(8), 10); }
     else if (a === '--input') { flags.input = argv[++i]; }
     else if (a.startsWith('--input=')) { flags.input = a.slice(8); }
+    else if (a === '--scope') { flags.scope = argv[++i]; }
+    else if (a.startsWith('--scope=')) { flags.scope = a.slice(8); }
+    else if (a === '--value') { flags.value = argv[++i]; }
+    else if (a.startsWith('--value=')) { flags.value = a.slice(8); }
+    else if (a === '--email') { flags.email = argv[++i]; }
+    else if (a.startsWith('--email=')) { flags.email = a.slice(8); }
+    else if (a === '--method') { flags.method = argv[++i]; }
+    else if (a.startsWith('--method=')) { flags.method = a.slice(9); }
+    else if (a === '--reason') { flags.reason = argv[++i]; }
+    else if (a.startsWith('--reason=')) { flags.reason = a.slice(9); }
+    else if (a === '--state') { flags.state = argv[++i]; }
+    else if (a.startsWith('--state=')) { flags.state = a.slice(8); }
+    else if (a === '--password-stdin') { flags.passwordStdin = true; }
+    else if (a === '--yes' || a === '-y') { flags.yes = true; }
     else if (a === '-h' || a === '--help') { flags.help = true; }
     else if (a === '-v' || a === '--version') { flags.version = true; }
     else { positional.push(a); }
@@ -986,6 +1000,21 @@ ${yellow('Skills (executable scripts):')}
 ${yellow('Teaching agent (skill/procedure proposals — no execution):')}
   teach-skill --dry-run <proposal.json>   Validate manifest locally (schema + safety)
   teach-skill --submit <proposal.json>    Submit to Brain after validation passes
+
+${yellow('Global settings governance (OM backend — human-approval gated):')}
+  settings get <key>                       Read effective value of a setting
+  settings set <key> <value> --scope global
+                                           Propose a GLOBAL change (NEVER applied
+                                           directly; creates an OMBA-#### approval)
+  approvals list [--state submitted] [--key K] [--limit N]
+  approvals show <OMBA-####>               Full report (old/new, risk, auth state)
+  approve <OMBA-####> [--email you@org]    Approve after a FRESH human auth challenge
+                     [--method session_reauth|totp|signed_token] [--password-stdin]
+  reject  <OMBA-####> [--reason "..."]
+    OMBrain facilitates only: it can never apply a global setting itself, and
+    can never approve its own proposals. A plaintext "yes" is never accepted.
+    Config: OM_SETTINGS_API_BASE (default https://orthodoxmetrics.com),
+            OM_SETTINGS_TOKEN (super_admin JWT for transport).
 
 ${yellow('Examples:')}
   ombrain server add master 192.168.1.254 --ports 8390 --role master
@@ -1266,6 +1295,267 @@ async function cmdTeachSkill(rest, flags, opts) {
 }
 
 // ---------------------------------------------------------------------------
+// OM settings-approval governance (facilitator only — never self-approves)
+//
+// These commands talk to the OM backend settings-approval API, NOT the Brain
+// API. OMBrain proposes global settings changes and helps a human super_admin
+// approve them with a FRESH auth challenge. OMBrain can never apply a global
+// setting directly, and can never approve its own proposals.
+// ---------------------------------------------------------------------------
+function omApiConfig() {
+  const base = (process.env.OM_SETTINGS_API_BASE || process.env.OM_API_BASE_URL || 'https://orthodoxmetrics.com')
+    .replace(/\/+$/, '');
+  const token = process.env.OM_SETTINGS_TOKEN || process.env.OM_ADMIN_JWT || process.env.BRAIN_OPS_JWT || '';
+  return { base, token };
+}
+
+function omRequest(method, reqPath, body, timeoutMs) {
+  const { base, token } = omApiConfig();
+  return new Promise((resolve, reject) => {
+    let u;
+    try { u = new URL(base + reqPath); }
+    catch (e) { return reject(new Error(`bad URL: ${base + reqPath}`)); }
+    const lib = u.protocol === 'https:' ? https : http;
+    const payload = body != null ? JSON.stringify(body) : null;
+    const headers = { accept: 'application/json' };
+    if (token) headers.authorization = `Bearer ${token}`;
+    if (payload) {
+      headers['content-type'] = 'application/json';
+      headers['content-length'] = Buffer.byteLength(payload);
+    }
+    const req = lib.request(u, { method, headers, timeout: timeoutMs || 30000 }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        let parsed = null;
+        if (data) { try { parsed = JSON.parse(data); } catch (_) { parsed = data; } }
+        resolve({ status: res.statusCode, body: parsed });
+      });
+    });
+    req.on('timeout', () => { req.destroy(new Error('request timed out')); });
+    req.on('error', (e) => reject(e));
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+function omDie(status, body) {
+  const msg = (body && (body.error || body.message)) || `HTTP ${status}`;
+  if (status === 401 || status === 403) {
+    die(`${msg}\n${dim('hint: set OM_SETTINGS_TOKEN to a super_admin JWT for the OM backend (transport only; approval still needs a fresh human challenge).')}`, 2);
+  }
+  die(msg, 2);
+}
+
+// Read a line from stdin (visible), used for email / non-secret prompts.
+function readLine(promptText) {
+  return new Promise((resolve) => {
+    process.stderr.write(promptText);
+    const readline = require('readline');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stderr, terminal: false });
+    rl.once('line', (line) => { rl.close(); resolve(line.trim()); });
+  });
+}
+
+// Read a secret from stdin with echo suppressed (best-effort).
+function readSecret(promptText) {
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    process.stderr.write(promptText);
+    let value = '';
+    const wasRaw = stdin.isTTY ? stdin.isRaw : false;
+    if (stdin.isTTY) stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+    const onData = (ch) => {
+      if (ch === '\r' || ch === '\n' || ch === '\u0004') {
+        if (stdin.isTTY) stdin.setRawMode(wasRaw);
+        stdin.pause();
+        stdin.removeListener('data', onData);
+        process.stderr.write('\n');
+        resolve(value);
+      } else if (ch === '\u0003') { // Ctrl-C
+        process.stderr.write('\n');
+        process.exit(130);
+      } else if (ch === '\u007f' || ch === '\b') { // backspace
+        value = value.slice(0, -1);
+      } else {
+        value += ch;
+      }
+    };
+    stdin.on('data', onData);
+  });
+}
+
+function formatApprovalList(b) {
+  const rows = b.approvals || [];
+  if (!rows.length) return 'No settings approvals.';
+  const lines = [`${bold('Settings approvals')} (${b.total != null ? b.total : rows.length})`, ''];
+  for (const a of rows) {
+    const st = a.approval_state;
+    const color = st === 'applied' ? green : (st === 'rejected' || st === 'failed' || st === 'expired' ? red : yellow);
+    lines.push(`  ${cyan(String(a.approval_ref).padEnd(10))} ${color(String(st).padEnd(13))} [${a.risk_level}] ${a.setting_key}`);
+    lines.push(`    ${dim(`${a.old_value == null ? '(default)' : a.old_value} -> ${a.proposed_value}  by ${a.requested_by} via ${a.proposal_source}`)}`);
+  }
+  return lines.join('\n');
+}
+
+function formatApproval(b) {
+  const a = b.approval || b;
+  if (!a || !a.approval_ref) return formatGeneric(b);
+  const apps = Array.isArray(a.affected_apps) ? a.affected_apps.join(', ') : (a.affected_apps || '');
+  const lines = [
+    `${bold(a.approval_ref)}  ${a.approval_state}`,
+    `  setting:        ${a.setting_key}`,
+    `  scope:          ${a.scope_type}${a.scope_id ? ':' + a.scope_id : ''}`,
+    `  old value:      ${a.old_value == null ? '(default)' : a.old_value}`,
+    `  new value:      ${a.proposed_value}`,
+    `  affected apps:  ${apps}`,
+    `  risk level:     ${a.risk_level}`,
+    `  classification: ${a.classification}`,
+    `  auth required:  ${a.auth_required ? 'yes' : 'no'}`,
+    `  proposed by:    ${a.requested_by} (source: ${a.proposal_source})`,
+  ];
+  if (a.auth_verified_by) lines.push(`  authenticated:  ${a.auth_verified_by} via ${a.auth_method} at ${a.auth_verified_at}`);
+  if (a.approved_by) lines.push(`  approved by:    ${green(a.approved_by)} at ${a.approved_at}`);
+  if (a.applied_at) lines.push(`  applied at:     ${a.applied_at}`);
+  if (a.rejected_by) lines.push(`  rejected by:    ${red(a.rejected_by)}${a.rejection_reason ? ' — ' + a.rejection_reason : ''}`);
+  if (a.apply_error) lines.push(`  apply error:    ${red(a.apply_error)}`);
+  if (a.omstudio_ref) lines.push(`  omstudio ref:   ${a.omstudio_ref}`);
+  return lines.join('\n');
+}
+
+async function cmdSettings(rest, flags) {
+  const sub = rest[0];
+  if (sub === 'get') {
+    const key = rest[1] || flags.key;
+    if (!key) die('usage: ombrain settings get <key>');
+    const { status, body } = await omRequest('GET', `/api/admin/settings/value${qs({ key })}`);
+    if (status >= 400) return omDie(status, body);
+    emit(flags, body, (b) => `${b.key} = ${b.value == null ? '(unset/default)' : b.value}`);
+    return;
+  }
+
+  if (sub === 'set') {
+    const key = rest[1];
+    const value = rest[2] !== undefined ? rest[2] : flags.value;
+    if (!key || value === undefined) die('usage: ombrain settings set <key> <value> --scope global');
+    const scope = flags.scope || 'global';
+    if (scope !== 'global') {
+      die('ombrain only facilitates GLOBAL settings via approval gating. Use the OM admin UI for church-scoped overrides.');
+    }
+    const { status, body } = await omRequest('POST', '/api/admin/settings/approvals', {
+      key, value, requested_by: 'ombrain', proposal_source: 'ombrain',
+    });
+    if (status >= 400) return omDie(status, body);
+    const a = body.approval || {};
+    if (flags.json) { emit(flags, body); return; }
+    out(yellow('Global setting change requires human authentication — NOT applied.'));
+    out('');
+    out(formatApproval({ approval: a }));
+    out('');
+    out(`Created ${bold(a.approval_ref)}. To approve you must authenticate as a super_admin:`);
+    out(`  ${cyan(`ombrain approve ${a.approval_ref}`)}`);
+    out(dim('  (or approve in the OMStudio Brain Approvals UI). A plaintext "yes" is not accepted.'));
+    return;
+  }
+
+  die('usage: ombrain settings <get|set>\n' +
+      '  ombrain settings get <key>\n' +
+      '  ombrain settings set <key> <value> --scope global');
+}
+
+async function cmdApprovals(rest, flags) {
+  const sub = rest[0];
+  if (sub === 'list' || sub === undefined) {
+    const { status, body } = await omRequest('GET', `/api/admin/settings/approvals${qs({ state: flags.state, key: flags.key, limit: flags.limit })}`);
+    if (status >= 400) return omDie(status, body);
+    emit(flags, body, formatApprovalList);
+    return;
+  }
+  if (sub === 'show') {
+    const ref = rest[1];
+    if (!ref) die('usage: ombrain approvals show <OMBA-####>');
+    const { status, body } = await omRequest('GET', `/api/admin/settings/approvals/${encodeURIComponent(ref)}`);
+    if (status >= 400) return omDie(status, body);
+    emit(flags, body, formatApproval);
+    return;
+  }
+  die('usage: ombrain approvals <list|show>');
+}
+
+async function cmdApprove(rest, flags) {
+  const ref = rest[0];
+  if (!ref) die('usage: ombrain approve <OMBA-####> [--email you@org] [--method session_reauth]');
+  if (flags.yes) {
+    note('a plaintext confirmation is NOT sufficient to approve a global setting; a fresh human auth challenge is required.');
+  }
+
+  // 1-2. Load approval + confirm it is pending.
+  const showRes = await omRequest('GET', `/api/admin/settings/approvals/${encodeURIComponent(ref)}`);
+  if (showRes.status >= 400) return omDie(showRes.status, showRes.body);
+  const approval = showRes.body.approval;
+  if (!approval) die(`approval ${ref} not found`, 2);
+  if (['approved', 'applied', 'rejected', 'expired', 'failed'].includes(approval.approval_state)) {
+    die(`approval ${ref} is ${approval.approval_state}; cannot approve`, 2);
+  }
+  out(formatApproval({ approval }));
+  out('');
+
+  // 4. Issue a FRESH auth challenge.
+  const method = flags.method || 'session_reauth';
+  const chRes = await omRequest('POST', `/api/admin/settings/approvals/${encodeURIComponent(ref)}/challenge`, { method });
+  if (chRes.status >= 400) return omDie(chRes.status, chRes.body);
+  const challenge = chRes.body.challenge;
+  note(`auth challenge issued (${challenge.method}); expires ${challenge.expires_at}`);
+
+  // Gather the fresh human credential for the challenge.
+  let response = {};
+  if (method === 'session_reauth') {
+    const email = flags.email || await readLine('super_admin email: ');
+    let password;
+    if (flags.passwordStdin) {
+      password = require('fs').readFileSync(0, 'utf8').replace(/\r?\n$/, '');
+    } else {
+      password = await readSecret('super_admin password: ');
+    }
+    if (!email || !password) die('email and password are required (plaintext confirmation is not accepted)', 2);
+    response = { email, password };
+  } else if (method === 'totp') {
+    const email = flags.email || await readLine('super_admin email: ');
+    const code = await readLine('TOTP code: ');
+    response = { email, token: code };
+  } else if (method === 'signed_token') {
+    const token = await readSecret('OMStudio signed approval token: ');
+    response = { token };
+  } else {
+    die(`unsupported auth method: ${method}`, 2);
+  }
+
+  // 5-9. Verify + apply on the server; OMBrain never applies locally.
+  const apRes = await omRequest('POST', `/api/admin/settings/approvals/${encodeURIComponent(ref)}/approve`, {
+    challenge_id: challenge.challenge_id,
+    response,
+  });
+  if (apRes.status >= 400) return omDie(apRes.status, apRes.body);
+  if (flags.json) { emit(flags, apRes.body); return; }
+  const a = apRes.body.approval || {};
+  out(green(`✓ ${ref} approved and applied by ${a.approved_by}`));
+  out(`  ${a.setting_key} = ${apRes.body.effective_value}`);
+}
+
+async function cmdReject(rest, flags) {
+  const ref = rest[0];
+  if (!ref) die('usage: ombrain reject <OMBA-####> [--reason "..."]');
+  const { status, body } = await omRequest('POST', `/api/admin/settings/approvals/${encodeURIComponent(ref)}/reject`, {
+    reason: flags.reason || null,
+  });
+  if (status >= 400) return omDie(status, body);
+  if (flags.json) { emit(flags, body); return; }
+  out(red(`✗ ${ref} rejected`));
+}
+
+// ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
 async function main() {
@@ -1279,6 +1569,12 @@ async function main() {
 
   // Registry management is handled before any network resolution.
   if (cmd === 'server') return cmdServer(rest, flags);
+
+  // settings-approval governance — talks to the OM backend, not the Brain API.
+  if (cmd === 'settings') return cmdSettings(rest, flags);
+  if (cmd === 'approvals') return cmdApprovals(rest, flags);
+  if (cmd === 'approve') return cmdApprove(rest, flags);
+  if (cmd === 'reject') return cmdReject(rest, flags);
 
   // skill / skills — executable script registry (singular alias supported)
   if (cmd === 'skill' || cmd === 'skills') {
