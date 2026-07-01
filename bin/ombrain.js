@@ -1016,6 +1016,17 @@ ${yellow('Global settings governance (OM backend — human-approval gated):')}
     Config: OM_SETTINGS_API_BASE (default https://orthodoxmetrics.com),
             OM_SETTINGS_TOKEN (super_admin JWT for transport).
 
+${yellow('OM Docs Pickup — governed internal-doc filing (facilitator; approval-gated):')}
+  pickup list [--state all|waiting|...]     List pickup items + filing state
+  pickup show <pickup_id>                   Show one pickup item
+  pickup file <pickup_id> [--category C]     Request Brain Approval to file into
+              [--title T] [--file target/path.md]   docs/internal/ (never files now)
+  pickup requests [--state submitted|approved|filed]  List filing requests
+  "pickup and file omdocs-pickup <pickup_id>"   Natural-language filing request
+    OMBrain facilitates only: a human super_admin must approve in OMStudio before
+    a document is placed under docs/internal/. Config: OM_SETTINGS_API_BASE,
+    OM_SETTINGS_TOKEN (super_admin JWT for transport).
+
 ${yellow('Examples:')}
   ombrain server add master 192.168.1.254 --ports 8390 --role master
   ombrain server add backup1 192.168.1.239 --ports 8390 --role backup
@@ -1544,6 +1555,117 @@ async function cmdApprove(rest, flags) {
   out(`  ${a.setting_key} = ${apRes.body.effective_value}`);
 }
 
+// ---------------------------------------------------------------------------
+// OM Docs Pickup — governed internal-documentation filing (facilitator only)
+//
+// OMBrain can request/track/explain filing and, AFTER a human super_admin
+// approves in OMStudio, trigger the deterministic file. It can NEVER
+// self-authorize placement of a document under docs/internal/.
+// ---------------------------------------------------------------------------
+function formatPickupFile(b) {
+  const f = (b && b.file) || b;
+  if (!f || !f.id) return formatGeneric(b);
+  const lines = [
+    `${bold(f.pickupId || f.id)}  ${f.filingState || 'none'}`,
+    `  title:       ${f.title || f.originalName}`,
+    `  file:        ${f.originalName}`,
+    `  status:      ${f.status}`,
+  ];
+  if (f.proposedCategory) lines.push(`  category:    ${f.proposedCategory}`);
+  if (f.proposedTargetDocsPath) lines.push(`  target:      ${f.proposedTargetDocsPath}`);
+  if (f.filingReceipt) lines.push(`  receipt:     ${f.filingReceipt}`);
+  if (f.filedDocsPath) lines.push(`  filed at:    ${f.filedDocsPath}`);
+  return lines.join('\n');
+}
+
+function formatFilingRequest(b) {
+  const r = (b && b.request) || b;
+  if (!r || !r.receipt) return formatGeneric(b);
+  const lines = [
+    `${bold(r.receipt)}  ${r.status}`,
+    `  pickup id:   ${r.pickupId}`,
+    `  document:    ${r.title || r.sourceFilename}`,
+    `  target path: ${r.proposedTargetPath}`,
+    `  category:    ${r.categoryLabel || r.category}`,
+    `  visibility:  ${r.visibility}`,
+    `  requested:   ${r.requestingActor} (via ${r.requestSource})`,
+  ];
+  if (r.omstudioRef) lines.push(`  omstudio:    ${r.omstudioRef}`);
+  if (r.approvedBy) lines.push(`  approved by: ${green(r.approvedBy)} at ${r.approvedAt}`);
+  if (r.rejectedBy) lines.push(`  rejected by: ${red(r.rejectedBy)}${r.decisionNote ? ' — ' + r.decisionNote : ''}`);
+  if (r.filedDocsPath) lines.push(`  filed:       ${green(r.filedDocsPath)}`);
+  return lines.join('\n');
+}
+
+async function cmdPickup(rest, flags) {
+  const sub = rest[0];
+
+  if (sub === 'list') {
+    const { status, body } = await omRequest('GET', `/api/docs-pickup/list${qs({ tab: flags.state || 'all' })}`);
+    if (status >= 400) return omDie(status, body);
+    const files = (body.data && body.data.files) || body.files || [];
+    if (flags.json) { emit(flags, { files }); return; }
+    if (!files.length) { out('No pickup items.'); return; }
+    out(`${bold('Pickup items')} (${files.length})\n`);
+    for (const f of files) {
+      out(`  ${cyan(String(f.pickupId || f.id).padEnd(28))} ${String(f.filingState || 'none').padEnd(24)} ${f.title || f.originalName}`);
+    }
+    return;
+  }
+
+  if (sub === 'show') {
+    const id = rest[1] || flags.key;
+    if (!id) die('usage: ombrain pickup show <pickup_id>');
+    const { status, body } = await omRequest('GET', `/api/docs-pickup/pickup/${encodeURIComponent(id)}`);
+    if (status >= 400) return omDie(status, body);
+    emit(flags, (body.data || body), formatPickupFile);
+    return;
+  }
+
+  if (sub === 'file' || sub === 'request') {
+    const id = rest[1] || flags.key;
+    if (!id) die('usage: ombrain pickup file <pickup_id> [--category "Architecture"] [--target docs/internal/...] [--title "..."]');
+    const payload = {
+      category: flags.category,
+      visibility: flags.value || 'internal',
+      targetPath: flags.file, // reuse --file as target path override, optional
+      title: flags.title,
+      requestSource: 'ombrain_cli',
+      requestingActor: flags.email || 'ombrain',
+    };
+    const { status, body } = await omRequest('POST', `/api/docs-pickup/${encodeURIComponent(id)}/request-filing`, payload);
+    if (status >= 400) return omDie(status, body);
+    const data = body.data || body;
+    if (flags.json) { emit(flags, data); return; }
+    const r = data.request || {};
+    out(yellow('Internal documentation filing requires human super_admin approval — NOT filed.'));
+    out('');
+    out(formatFilingRequest({ request: r }));
+    out('');
+    out(`Created receipt ${bold(r.receipt)}. A human super_admin must approve it in the`);
+    out('OMStudio Brain Approvals surface (or OM Docs Pickup) before it can be filed.');
+    out(dim('OMBrain facilitates only — it cannot self-authorize placement under docs/internal/.'));
+    return;
+  }
+
+  if (sub === 'requests') {
+    const { status, body } = await omRequest('GET', `/api/docs-pickup/filing/requests${qs({ status: flags.state, limit: flags.limit })}`);
+    if (status >= 400) return omDie(status, body);
+    const requests = (body.data && body.data.requests) || body.requests || [];
+    if (flags.json) { emit(flags, { requests }); return; }
+    if (!requests.length) { out('No filing requests.'); return; }
+    out(`${bold('Filing requests')} (${requests.length})\n`);
+    for (const r of requests) {
+      out(`  ${cyan(String(r.receipt).padEnd(10))} ${String(r.status).padEnd(10)} ${r.pickupId}  ${r.proposedTargetPath}`);
+    }
+    return;
+  }
+
+  die('usage: ombrain pickup <list|show|file|requests>\n'
+    + '  ombrain pickup file <pickup_id> [--category "Architecture"]\n'
+    + "  ombrain \"pickup and file omdocs-pickup <pickup_id>\"");
+}
+
 async function cmdReject(rest, flags) {
   const ref = rest[0];
   if (!ref) die('usage: ombrain reject <OMBA-####> [--reason "..."]');
@@ -1566,6 +1688,18 @@ async function main() {
 
   const cmd = positional[0];
   const rest = positional.slice(1);
+
+  // Natural-language docs-filing form:
+  //   ombrain "pickup and file omdocs-pickup <pickup_id>"
+  // (arrives as a single positional, or as multiple space-split tokens).
+  const joined = positional.join(' ');
+  const nlFile = joined.match(/pickup\s+and\s+file\s+omdocs-pickup\s+(\S+)/i);
+  if (nlFile) {
+    return cmdPickup(['file', nlFile[1]], flags);
+  }
+
+  // pickup — OM Docs Pickup governed filing (facilitator; talks to OM backend).
+  if (cmd === 'pickup') return cmdPickup(rest, flags);
 
   // Registry management is handled before any network resolution.
   if (cmd === 'server') return cmdServer(rest, flags);
