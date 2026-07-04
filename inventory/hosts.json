@@ -1,13 +1,17 @@
 {
   "schema_version": 1,
   "domain": "om.internal",
-  "updated": "2026-06-28",
-  "notes": "Declared source of truth for om.internal hosts. Regenerate HOST-SNAPSHOT.md via collect-hosts.js.",
+  "updated": "2026-07-04",
+  "notes": "Declared source of truth for om.internal hosts. Regenerate HOST-SNAPSHOT.md via collect-hosts.js. Aliases include OMAI platform-inventory ids/hostnames and service keys for target-identity resolution.",
   "hosts": [
     {
       "name": "vegu",
       "ip": "192.168.1.1",
-      "aliases": [],
+      "aliases": [
+        "pfsense-gw",
+        "pfsense.internal",
+        "pfsense"
+      ],
       "role": "LAN gateway",
       "environment": "lan",
       "key_ports": [],
@@ -28,14 +32,16 @@
       "aliases": [],
       "role": "Domain controller / DNS (AD DS, om.internal)",
       "environment": "infrastructure",
-      "key_ports": [53],
+      "key_ports": [
+        53
+      ],
       "notes": "Authoritative forward zone for om.internal"
     },
     {
       "name": "juju",
       "ip": "192.168.1.236",
       "aliases": [],
-      "role": "—",
+      "role": "\u2014",
       "environment": "lan",
       "key_ports": [],
       "notes": ""
@@ -43,12 +49,28 @@
     {
       "name": "om-prod01",
       "ip": "192.168.1.239",
-      "aliases": ["orthodoxmetrics"],
+      "aliases": [
+        "orthodoxmetrics",
+        "om-primary",
+        "om-primary.local",
+        "om",
+        "omai"
+      ],
       "role": "OM + OMAI production edge",
       "environment": "production",
-      "repo": ["omai", "prod-current"],
-      "local_path": ["/var/www/omai", "/var/www/orthodoxmetrics/prod"],
-      "key_ports": [443, 3001, 7060],
+      "repo": [
+        "omai",
+        "prod-current"
+      ],
+      "local_path": [
+        "/var/www/omai",
+        "/var/www/orthodoxmetrics/prod"
+      ],
+      "key_ports": [
+        443,
+        3001,
+        7060
+      ],
       "notes": "nginx :443, OM :3001, OMAI ops :7060 (/api/brain/* proxy to om-dev)"
     },
     {
@@ -63,21 +85,37 @@
     {
       "name": "om-dbp01",
       "ip": "192.168.1.241",
-      "aliases": ["omdb", "om-db"],
+      "aliases": [
+        "omdb",
+        "om-db",
+        "om-db.internal",
+        "db"
+      ],
       "role": "Central MariaDB",
       "environment": "production",
-      "key_ports": [3306],
+      "key_ports": [
+        3306
+      ],
       "notes": "orthodoxmetrics_db, omai_db, om_church_* tenant DBs"
     },
     {
       "name": "omstudio",
       "ip": "192.168.1.242",
-      "aliases": [],
+      "aliases": [
+        "omstudio-primary",
+        "omstudio-primary.local"
+      ],
       "role": "OMStudio",
       "environment": "production",
-      "repo": ["omstudio"],
-      "local_path": ["/var/www/omstudio"],
-      "key_ports": [443],
+      "repo": [
+        "omstudio"
+      ],
+      "local_path": [
+        "/var/www/omstudio"
+      ],
+      "key_ports": [
+        443
+      ],
       "notes": "OMStudio V2; governance embed at /omstudio-embed"
     },
     {
@@ -93,7 +131,7 @@
       "name": "sushi",
       "ip": "192.168.1.250",
       "aliases": [],
-      "role": "—",
+      "role": "\u2014",
       "environment": "lan",
       "key_ports": [],
       "notes": ""
@@ -101,61 +139,107 @@
     {
       "name": "om-workshop",
       "ip": "192.168.1.251",
-      "aliases": [],
+      "aliases": [
+        "omworkshop",
+        "workshop"
+      ],
       "role": "OM Workshop",
       "environment": "production",
-      "repo": ["om-workshop"],
-      "local_path": ["/var/www/om-workshop"],
-      "key_ports": [443],
+      "repo": [
+        "om-workshop"
+      ],
+      "local_path": [
+        "/var/www/om-workshop"
+      ],
+      "key_ports": [
+        443
+      ],
       "notes": "Component factory; embedded via nginx on .239"
     },
     {
       "name": "auth01",
       "ip": "192.168.1.252",
       "aliases": [],
-      "secondary_ips": ["192.168.1.37"],
+      "secondary_ips": [
+        "192.168.1.37"
+      ],
       "role": "FreeIPA (identity management)",
       "environment": "infrastructure",
-      "key_ports": [443, 88],
-      "notes": "DNS name auth01 = FreeIPA — NOT the Brain host"
+      "key_ports": [
+        443,
+        88
+      ],
+      "notes": "DNS name auth01 = FreeIPA \u2014 NOT the Brain host"
     },
     {
       "name": "keycloak",
       "ip": "192.168.1.253",
-      "aliases": ["auth1"],
+      "aliases": [
+        "auth1",
+        "auth0",
+        "auth0.internal"
+      ],
       "role": "Keycloak (Docker OIDC)",
       "environment": "production",
-      "key_ports": [8080],
+      "key_ports": [
+        8080
+      ],
       "notes": "User calls this auth1; legacy inventory id auth0"
     },
     {
       "name": "om-dev",
       "ip": "192.168.1.254",
-      "aliases": ["omdev", "sso"],
+      "aliases": [
+        "omdev",
+        "sso",
+        "om-dev.internal",
+        "ombrain",
+        "om-brain"
+      ],
       "role": "om-brain service host",
       "environment": "production",
-      "local_path": ["/opt/om-brain"],
-      "key_ports": [8390, 8391],
-      "notes": "Brain API :8390, webhook nginx :8391, inference, brain.db — NOT auth01/FreeIPA"
+      "local_path": [
+        "/opt/om-brain"
+      ],
+      "key_ports": [
+        8390,
+        8391
+      ],
+      "notes": "Brain API :8390, webhook nginx :8391, inference, brain.db \u2014 NOT auth01/FreeIPA"
     },
     {
       "name": "om-sh1",
       "ip": "192.168.1.79",
-      "aliases": [],
+      "aliases": [
+        "backup-nfs",
+        "nas-backups.local",
+        "nas-backups"
+      ],
       "role": "NFS / backup share",
       "environment": "infrastructure",
-      "key_ports": [2049],
+      "key_ports": [
+        2049
+      ],
       "notes": "QNAP NFS; backups under /backups on .239"
     },
     {
       "name": "ops",
       "ip": "192.168.1.40",
-      "aliases": [],
+      "aliases": [
+        "omai-ops",
+        "ops.om.internal"
+      ],
       "role": "omai-ops deploy scripts host",
       "environment": "infrastructure",
-      "repo": ["omai-ops"],
-      "local_path": ["/srv/omai-ops"],
-      "key_ports": [22],
+      "repo": [
+        "omai-ops"
+      ],
+      "local_path": [
+        "/srv/omai-ops"
+      ],
+      "key_ports": [
+        22
+      ],
       "notes": "No om.internal A-record confirmed at seed time; IP-only declared entry"
     }
   ]

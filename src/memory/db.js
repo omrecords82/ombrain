@@ -272,14 +272,45 @@ class MemoryDB {
   // -------------------------------------------------------------------------
   // Event memory (rolling window)
   // -------------------------------------------------------------------------
-  insertEvent({ source, event_type, severity, church_id, correlation, payload_json }) {
+  insertEvent({
+    source,
+    event_type,
+    severity,
+    church_id,
+    correlation,
+    payload_json,
+    target_name,
+    target_ip,
+    target_host,
+    target_service,
+    check_method,
+    checked_from,
+    target_identity_status,
+  }) {
     if (this.backend === 'sqlite') {
       this.sqlite
         .prepare(
-          `INSERT INTO event_memory (source, event_type, severity, church_id, correlation, payload_json)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO event_memory (
+             source, event_type, severity, church_id, correlation, payload_json,
+             target_name, target_ip, target_host, target_service,
+             check_method, checked_from, target_identity_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(source, event_type || null, severity || null, church_id || null, correlation || null, payload_json);
+        .run(
+          source,
+          event_type || null,
+          severity || null,
+          church_id || null,
+          correlation || null,
+          payload_json,
+          target_name || null,
+          target_ip || null,
+          target_host || null,
+          target_service || null,
+          check_method || null,
+          checked_from || null,
+          target_identity_status || null,
+        );
       return;
     }
     this.json.event_memory.push({
@@ -290,6 +321,13 @@ class MemoryDB {
       church_id: church_id || null,
       correlation: correlation || null,
       payload_json,
+      target_name: target_name || null,
+      target_ip: target_ip || null,
+      target_host: target_host || null,
+      target_service: target_service || null,
+      check_method: check_method || null,
+      checked_from: checked_from || null,
+      target_identity_status: target_identity_status || null,
       observed_at: new Date().toISOString(),
     });
     this._persistJson();

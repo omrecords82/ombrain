@@ -12,6 +12,7 @@
 const { config } = require('../config');
 const { redactForLog } = require('../ai/redactor');
 const adapterStatus = require('../health/adapterStatus');
+const { resolveTargetIdentity } = require('../ingest/eventIdentity');
 const logger = require('../util/logger');
 
 class EventAdapter {
@@ -59,14 +60,28 @@ class EventAdapter {
       const items = Array.isArray(data) ? data : data.events || data.runs || [];
       for (const raw of items) {
         const safe = redactForLog(raw);
+        const eventType = safe.event_type || safe.status || null;
+        // Resolve target identity (registry-enriched) before persistence so
+        // host reachability events always carry target_name/target_ip.
+        const identity = resolveTargetIdentity(eventType, safe);
+        if (identity.registry_resolution) {
+          safe.registry_resolution = identity.registry_resolution;
+        }
         this.db &&
           this.db.insertEvent({
             source,
-            event_type: safe.event_type || safe.status || null,
+            event_type: eventType,
             severity: safe.severity || null,
             church_id: null, // tenant ids are redacted upstream; never persist raw
             correlation: safe.request_id || safe.id || null,
             payload_json: JSON.stringify(safe),
+            target_name: identity.target_name,
+            target_ip: identity.target_ip,
+            target_host: identity.target_host,
+            target_service: identity.target_service,
+            check_method: identity.check_method,
+            checked_from: identity.checked_from,
+            target_identity_status: identity.target_identity_status,
           });
       }
       adapterStatus.recordPoll(source, { ok: true, status: res.status });

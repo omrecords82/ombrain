@@ -9,6 +9,7 @@
  */
 
 const { validateWebhookSecret } = require('../governance/omstudioClient');
+const { resolveTargetIdentity, isHostReachabilityEvent } = require('./eventIdentity');
 
 const ALLOWED_SOURCES = Object.freeze(['om', 'omstudio', 'workshop', 'omai']);
 
@@ -92,6 +93,19 @@ function persistIngestedEvent(db, validated, redactForLog) {
     ingested_via: 'push',
   });
 
+  // Registry-enriched target identity: a push with only a service key
+  // (e.g. source 'omstudio') is resolved through inventory/hosts.json before
+  // persistence; unresolvable host events are stored marked 'malformed'.
+  const identity = resolveTargetIdentity(
+    validated.eventType,
+    isHostReachabilityEvent(validated.eventType)
+      ? { ...safePayload, service: safePayload.service || safePayload.app || validated.source }
+      : safePayload,
+  );
+  if (identity.registry_resolution) {
+    safePayload.registry_resolution = identity.registry_resolution;
+  }
+
   db.insertEvent({
     source: validated.source,
     event_type: validated.eventType,
@@ -99,6 +113,13 @@ function persistIngestedEvent(db, validated, redactForLog) {
     church_id: null,
     correlation: validated.correlation,
     payload_json: JSON.stringify(safePayload),
+    target_name: identity.target_name,
+    target_ip: identity.target_ip,
+    target_host: identity.target_host,
+    target_service: identity.target_service,
+    check_method: identity.check_method,
+    checked_from: identity.checked_from,
+    target_identity_status: identity.target_identity_status,
   });
 
   return {
