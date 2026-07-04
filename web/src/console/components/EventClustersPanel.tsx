@@ -21,10 +21,21 @@ const CLASSIFICATION_COLOR: Record<EventClassification, 'success' | 'warning' | 
   requires_attention: 'error',
 };
 
+function TargetDetailLine({ label, value }: { label: string; value: string | null | undefined }) {
+  if (!value) return null;
+  return (
+    <Typography variant="caption" color="text.secondary" display="block">
+      {label}: <Box component="span" sx={{ fontFamily: 'monospace' }}>{value}</Box>
+    </Typography>
+  );
+}
+
 function ClusterRow({ cluster }: { cluster: BriefingEventCluster }) {
   const theme = useTheme();
   const [open, setOpen] = useState(false);
   const attention = cluster.classification_summary === 'requires_attention';
+  const target = cluster.target;
+  const malformed = Boolean(cluster.malformed_telemetry);
 
   return (
     <Box sx={{ borderBottom: 1, borderColor: 'divider', '&:last-child': { borderBottom: 0 } }}>
@@ -46,6 +57,10 @@ function ClusterRow({ cluster }: { cluster: BriefingEventCluster }) {
               {cluster.title}
             </Typography>
             <Chip size="small" label={`×${cluster.count}`} variant="outlined" />
+            {cluster.event_type && (
+              <Chip size="small" variant="outlined" label={`Type: ${cluster.event_type}`} sx={{ fontFamily: 'monospace' }} />
+            )}
+            {malformed && <Chip size="small" color="warning" variant="filled" label="Malformed telemetry" />}
             <Chip
               size="small"
               color={CLASSIFICATION_COLOR[cluster.classification_summary]}
@@ -59,6 +74,21 @@ function ClusterRow({ cluster }: { cluster: BriefingEventCluster }) {
           </Typography>
           <Collapse in={open}>
             <Box sx={{ mt: 1, p: 1.25, borderRadius: 1, bgcolor: alpha(theme.palette.text.primary, 0.04) }}>
+              {target && (
+                <Box sx={{ mb: 0.75 }}>
+                  <TargetDetailLine label="Type" value={cluster.event_type} />
+                  <TargetDetailLine label="Target" value={target.target_name} />
+                  <TargetDetailLine label="Target IP" value={target.target_ip} />
+                  <TargetDetailLine label="Target host" value={target.target_host} />
+                  <TargetDetailLine label="Source" value={target.source_component} />
+                  <TargetDetailLine label="Checked from" value={target.checked_from} />
+                  <TargetDetailLine label="Method" value={target.check_method} />
+                  <TargetDetailLine label="Endpoint" value={target.check_endpoint} />
+                  <TargetDetailLine label="Port" value={target.target_port} />
+                  <TargetDetailLine label="Last failure" value={target.last_failure_at} />
+                  <TargetDetailLine label="Last success" value={target.last_success_at} />
+                </Box>
+              )}
               <Typography variant="caption" color="text.secondary" display="block">
                 Likely cause: {cluster.likely_cause}
               </Typography>
@@ -97,7 +127,7 @@ export default function EventClustersPanel({
   return (
     <ConsolePanel
       title="Event Clusters"
-      description="Repeated event rows grouped by service, type, severity, and correlation"
+      description="Repeated event rows grouped by event type, target host/IP, source component, and check method"
       action={
         onOpenRaw ? (
           <Button size="small" onClick={onOpenRaw}>

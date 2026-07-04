@@ -158,6 +158,15 @@ export interface BrainEventRecord {
   correlation?: string | null;
   payload_json?: string;
   observed_at?: string;
+  target_name?: string | null;
+  target_ip?: string | null;
+  target_host?: string | null;
+  target_service?: string | null;
+  check_method?: string | null;
+  checked_from?: string | null;
+  target_identity_status?: string | null;
+  correlation_id?: string | null;
+  request_id?: string | null;
 }
 
 export interface BrainEventList {

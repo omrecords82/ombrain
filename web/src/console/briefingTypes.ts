@@ -65,9 +65,25 @@ export interface BriefingCapabilityReadiness {
 
 export type EventClassification = 'signal' | 'expected_noise' | 'duplicate' | 'low_value_audit' | 'requires_attention';
 
+export interface BriefingClusterTarget {
+  target_name: string | null;
+  target_ip: string | null;
+  target_host: string | null;
+  target_service: string | null;
+  check_method: string | null;
+  checked_from: string | null;
+  check_endpoint: string | null;
+  target_port: string | null;
+  source_component: string | null;
+  last_failure_at: string | null;
+  last_success_at: string | null;
+}
+
 export interface BriefingEventCluster {
   id: string;
   title: string;
+  /** Raw event type (e.g. host.unreachable) — secondary "Type" metadata, never the title. */
+  event_type?: string;
   count: number;
   first_seen: string;
   last_seen: string;
@@ -77,6 +93,8 @@ export interface BriefingEventCluster {
   recommended_action: string;
   confidence: Confidence;
   classification_summary: EventClassification;
+  malformed_telemetry?: boolean;
+  target?: BriefingClusterTarget;
   evidence_ids: (string | number)[];
 }
 

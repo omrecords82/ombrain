@@ -400,10 +400,67 @@ function safeParsePayload(row) {
   }
 }
 
+function pickFirst(...values) {
+  for (const v of values) {
+    if (v != null && String(v).trim() !== '') return String(v).trim();
+  }
+  return null;
+}
+
+const HOST_EVENT_RE = /^host\.(unreachable|recovered)$/i;
+
+/**
+ * Target identity for one ledger row. Prefers the first-class columns written
+ * by om-brain ingestion (target_ip/target_name/...), then falls back to the
+ * payload envelope (event_payload.hostname / host_id from older producers).
+ */
+function eventIdentityFromRow(row) {
+  const payload = safeParsePayload(row) || {};
+  const ep =
+    (payload.event_payload && typeof payload.event_payload === 'object' && payload.event_payload) ||
+    (payload.data && typeof payload.data === 'object' && payload.data) ||
+    {};
+  return {
+    target_name: pickFirst(row.target_name, ep.target_name, ep.host_id, payload.target_name),
+    target_ip: pickFirst(row.target_ip, ep.target_ip, ep.ip),
+    target_host: pickFirst(row.target_host, ep.target_host, ep.hostname),
+    target_service: pickFirst(row.target_service, ep.target_service, ep.service),
+    check_method: pickFirst(row.check_method, ep.check_method, ep.collector),
+    checked_from: pickFirst(row.checked_from, ep.checked_from),
+    check_endpoint: pickFirst(ep.check_endpoint, ep.endpoint, ep.url),
+    target_port: pickFirst(ep.target_port, ep.port),
+    identity_status: pickFirst(row.target_identity_status),
+    last_failure_at: pickFirst(ep.last_failure_at),
+    last_success_at: pickFirst(ep.last_success_at),
+    source_component: pickFirst(payload.source_system, ep.source_system, row.source),
+  };
+}
+
+function identityIsMalformed(row, identity) {
+  if (!HOST_EVENT_RE.test(String(row.event_type || ''))) return false;
+  if (identity.identity_status === 'malformed') return true;
+  return !identity.target_ip && !identity.target_host && !identity.target_name;
+}
+
 function eventKey(row) {
   const service = row.source || 'unknown-service';
   const type = row.event_type || 'unknown-event';
   const severity = (row.severity || 'info').toLowerCase();
+  const identity = eventIdentityFromRow(row);
+
+  // Host reachability (and any target-bearing) events group by
+  // event_type + target + source_component + check_method (+ port/endpoint),
+  // so OMStudio-unreachable and OMWorkshop-unreachable are separate incidents
+  // while repeats for the same host collapse into one.
+  const target = pickFirst(identity.target_ip, identity.target_host, identity.target_name);
+  if (HOST_EVENT_RE.test(type) || target) {
+    const targetKey = identityIsMalformed(row, identity) ? 'malformed-telemetry' : target || 'unknown-target';
+    const sourceComponent = identity.source_component || service;
+    const method = identity.check_method || 'unknown-method';
+    const sub = pickFirst(identity.target_port, identity.check_endpoint) || '';
+    return `${service}::${type}::${severity}::target=${targetKey}::${sourceComponent}::${method}::${sub}`;
+  }
+
   const correlation = row.correlation || 'no-correlation';
   return `${service}::${type}::${severity}::${correlation}`;
 }
@@ -477,11 +534,47 @@ function clusterAndClassifyEvents(rows) {
   return { classifiedRows, clusters, suppressedNoise };
 }
 
+/**
+ * Human title for a host reachability cluster, in strict priority order:
+ *   1. `<target_service or target_name> / <target_ip> unreachable`
+ *   2. `<target_host> / <target_ip> unreachable`
+ *   3. `<target_ip> unreachable`
+ *   4. `<endpoint/url> unreachable`
+ *   5. `Unknown host unreachable — malformed telemetry`
+ * The raw event_type is NEVER the title — it is exposed as `event_type`
+ * ("Type") metadata on the cluster instead.
+ */
+function hostClusterTitle(type, identity, malformed) {
+  const verb = /recovered/i.test(type) ? 'recovered' : 'unreachable';
+  if (malformed) return `Unknown host ${verb} — malformed telemetry`;
+
+  const label = pickFirst(identity.target_service, identity.target_name);
+  if (label && identity.target_ip) return `${label} / ${identity.target_ip} ${verb}`;
+  if (identity.target_host && identity.target_ip) return `${identity.target_host} / ${identity.target_ip} ${verb}`;
+  if (identity.target_ip) return `${identity.target_ip} ${verb}`;
+  if (label && identity.target_host) return `${label} / ${identity.target_host} ${verb}`;
+  if (identity.target_host) return `${identity.target_host} ${verb}`;
+  if (label) return `${label} ${verb}`;
+  if (identity.check_endpoint) return `${identity.check_endpoint} ${verb}`;
+  return `Unknown host ${verb} — malformed telemetry`;
+}
+
 function buildClusterSummary(id, key, items) {
   const [service, type, severity] = key.split('::');
   const first = items[0].row;
   const last = items[items.length - 1].row;
   const count = items.length;
+
+  const isHostEvent = HOST_EVENT_RE.test(type);
+  // Latest row wins for identity (registry data may improve over time).
+  const identity = eventIdentityFromRow(last);
+  const malformed = isHostEvent && identityIsMalformed(last, identity);
+  const targetLabel = pickFirst(
+    identity.target_service,
+    identity.target_name,
+    identity.target_host,
+    identity.target_ip,
+  );
   const dominantClassification = items.some((i) => i.classification === 'requires_attention')
     ? 'requires_attention'
     : items.every((i) => i.classification === 'duplicate' || i.classification === 'expected_noise' || i.classification === 'low_value_audit')
@@ -492,11 +585,20 @@ function buildClusterSummary(id, key, items) {
   let recommended_action;
   let confidence;
 
-  if (dominantClassification === 'requires_attention') {
+  if (malformed) {
+    impact = `${count} host reachability event(s) whose target host/IP could not be determined (source: ${identity.source_component || service}). The producer is emitting incomplete telemetry.`;
+    recommended_action = `Fix the producer (${identity.source_component || service}) to include target_ip/target_host, or add the host to the OMBrain registry (inventory/hosts.json). Raw payloads are preserved in the ledger.`;
+    confidence = 'high';
+  } else if (dominantClassification === 'requires_attention') {
+    const subject = isHostEvent && targetLabel
+      ? `${targetLabel}${identity.target_ip && targetLabel !== identity.target_ip ? ` (${identity.target_ip})` : ''}`
+      : service;
     impact = count > 1
-      ? `${count} ${severity}-severity events from ${service} (${type}) between ${first.observed_at} and ${last.observed_at}.`
-      : `A ${severity}-severity event from ${service} (${type}).`;
-    recommended_action = `Investigate ${service} immediately — recurring ${severity} events of type ${type}.`;
+      ? `${count} ${severity}-severity events targeting ${subject} (${type}) between ${first.observed_at} and ${last.observed_at}.`
+      : `A ${severity}-severity event targeting ${subject} (${type}).`;
+    recommended_action = isHostEvent && targetLabel
+      ? `Investigate ${subject} immediately — checked from ${identity.checked_from || 'unknown vantage'} via ${identity.check_method || 'unknown method'}; recurring ${severity} ${type} events.`
+      : `Investigate ${service} immediately — recurring ${severity} events of type ${type}.`;
     confidence = count >= 3 ? 'high' : 'medium';
   } else if (dominantClassification === 'expected_noise') {
     impact = `Routine ${type} signal from ${service}, occurred ${count} time(s). No service impact expected.`;
@@ -520,18 +622,41 @@ function buildClusterSummary(id, key, items) {
     confidence = count >= 3 ? 'medium' : 'low';
   }
 
+  const title = isHostEvent
+    ? hostClusterTitle(type, identity, malformed)
+    : targetLabel
+      ? `${type} — ${targetLabel}`
+      : `${type} — ${service}`;
+
   return {
     id,
-    title: `${type} — ${service}`,
+    title,
+    event_type: type,
     count,
     first_seen: first.observed_at,
     last_seen: last.observed_at,
     severity,
     impact,
-    likely_cause: `Pattern key: service=${service}, event_type=${type}, severity=${severity}`,
+    likely_cause: isHostEvent
+      ? `Pattern key: target=${pickFirst(identity.target_ip, identity.target_host, identity.target_name) || 'unknown'}, source=${identity.source_component || service}, method=${identity.check_method || 'unknown'}, event_type=${type}`
+      : `Pattern key: service=${service}, event_type=${type}, severity=${severity}`,
     recommended_action,
     confidence,
     classification_summary: dominantClassification,
+    malformed_telemetry: malformed || undefined,
+    target: {
+      target_name: identity.target_name,
+      target_ip: identity.target_ip,
+      target_host: identity.target_host,
+      target_service: identity.target_service,
+      check_method: identity.check_method,
+      checked_from: identity.checked_from,
+      check_endpoint: identity.check_endpoint,
+      target_port: identity.target_port,
+      source_component: identity.source_component,
+      last_failure_at: identity.last_failure_at || (isHostEvent && !/recovered/i.test(type) ? last.observed_at : null),
+      last_success_at: identity.last_success_at || (isHostEvent && /recovered/i.test(type) ? last.observed_at : null),
+    },
     evidence_ids: items.map((i) => i.row.id ?? i.row.observed_at),
   };
 }
@@ -648,4 +773,5 @@ async function buildBriefing() {
   };
 }
 
-module.exports = { buildBriefing };
+// clusterAndClassifyEvents exported for tests/diagnostics; buildBriefing is the API.
+module.exports = { buildBriefing, clusterAndClassifyEvents };

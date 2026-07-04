@@ -28,8 +28,9 @@ export default function EventsScreen() {
           Default view: clusters, not raw rows
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Repeated events are grouped by service, event type, severity, and correlation, then classified as signal,
-          expected noise, duplicate, low-value audit, or requires attention. Use “View Raw Events” below for the
+          Repeated events are grouped by event type, target host/IP, source component, and check method, then
+          classified as signal, expected noise, duplicate, low-value audit, or requires attention. Host events whose
+          target cannot be identified are flagged as malformed telemetry. Use “View Raw Events” below for the
           unclustered ledger.
         </Typography>
       </Alert>
