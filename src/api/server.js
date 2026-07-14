@@ -444,6 +444,24 @@ function createServer(deps = {}) {
   // -------------------------------------------------------------------------
 
   const { processTeachingRequest } = require('../agents/teachingAgent');
+  const { proposeWorkflowChange } = require('../governance/proposeWorkflowChange');
+
+  // PROC-001 Constitutional Gate — workflow / procedure proposals
+  app.post('/brain/propose-workflow', async (req, res) => {
+    try {
+      const b = req.body || {};
+      const dryRun = !!(b.dry_run || b.dryRun || req.query.dry_run === '1');
+      const omstudio = governance && governance.omstudio;
+      if (!omstudio) {
+        return res.status(503).json({ ok: false, error: 'no_omstudio_client', execution_allowed: false });
+      }
+      const result = await proposeWorkflowChange(b, { omstudio, dryRun, governance });
+      return res.status(result.ok ? (dryRun ? 200 : 201) : 400).json(redactForLog(result));
+    } catch (e) {
+      logger.error('propose_workflow_error', { name: e && e.name, code: e && e.code });
+      return res.status(500).json({ ok: false, error: 'propose_workflow_failed', execution_allowed: false });
+    }
+  });
 
   app.post('/brain/teach/skill-proposal', async (req, res) => {
     const b = req.body || {};

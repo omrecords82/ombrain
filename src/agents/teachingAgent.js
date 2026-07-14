@@ -257,18 +257,21 @@ function storeProposal(db, manifest, { autoApproveLow = false } = {}) {
 
 /**
  * Submit OMStudio governance for medium/high or action-capable proposals.
+ * Procedure / workflow / OPERATIONS proposals route through the PROC-001
+ * Constitutional Gate (`proposeWorkflowChange`) so they cannot execute
+ * until a superadmin Approves in OMStudio.
  */
 async function submitGovernance(governance, manifest, stored, sessionId) {
   if (!governance || !governance.omstudio) {
     return { submitted: false, reason: 'no_governance' };
   }
 
-  const classification = manifest.risk_level === 'high' || manifest.risk_level === 'destructive'
-    ? 'requires_human_superadmin'
-    : 'requires_human_superadmin';
-
+  const classification = 'requires_human_superadmin';
   const summary = `[teaching_agent:${manifest.risk_level}] ${manifest.name}: ${manifest.description}`.slice(0, 500);
   const domains = manifest.category;
+  const procedural = /^(proposal|operations|procedure|workflow)$/i.test(String(manifest.category || ''))
+    || /workflow|procedure|process/i.test(String(manifest.name || ''))
+    || !!manifest.proc001;
 
   let approvalId = null;
   if (governance.db) {
@@ -282,28 +285,54 @@ async function submitGovernance(governance, manifest, stored, sessionId) {
     });
   }
 
-  const submitPayload = redactForLog({
-    approval_local_id: approvalId,
-    teaching_proposal_id: stored.id,
-    teaching_proposal_slug: stored.slug,
-    session_id: sessionId || null,
-    classification,
-    domains,
-    proposal_summary: summary,
-    manifest_name: manifest.name,
-    risk_level: manifest.risk_level,
-  });
+  let submitted;
+  let constitutional = null;
 
-  const submitted = await governance.omstudio.submitApprovalRequest(submitPayload);
+  if (procedural) {
+    const { proposeWorkflowChange } = require('../governance/proposeWorkflowChange');
+    constitutional = await proposeWorkflowChange({
+      title: manifest.name || stored.slug,
+      description: manifest.description || summary,
+      risk_profile: manifest.risk_level || 'medium',
+      category: 'OPERATIONS',
+      tags: ['proposal', 'workflow', 'teaching_agent', String(manifest.category || 'proposal')],
+      slug: stored.slug || manifest.name,
+      workflow_manifest: manifest,
+      session_id: sessionId || null,
+      author_id: 'teaching_agent',
+      approval_local_id: approvalId,
+      domains: `workflow,teaching,${domains || 'proposal'}`,
+    }, { omstudio: governance.omstudio });
+    submitted = {
+      ok: !!(constitutional && constitutional.ok),
+      ref: (constitutional && constitutional.approval && constitutional.approval.ref)
+        || (constitutional && constitutional.links && constitutional.links.approval_ref)
+        || null,
+      transport: governance.omstudio.transport,
+    };
+  } else {
+    const submitPayload = redactForLog({
+      approval_local_id: approvalId,
+      teaching_proposal_id: stored.id,
+      teaching_proposal_slug: stored.slug,
+      session_id: sessionId || null,
+      classification,
+      domains,
+      proposal_summary: summary,
+      manifest_name: manifest.name,
+      risk_level: manifest.risk_level,
+    });
+    submitted = await governance.omstudio.submitApprovalRequest(submitPayload);
+  }
 
   if (governance.db) {
     governance.db.appendOmstudioAudit({
-      kind: 'teaching_proposal',
+      kind: procedural ? 'teaching_workflow_proposal' : 'teaching_proposal',
       source_decision_id: stored.id,
       classification,
       transport: submitted.transport,
       omstudio_ref: submitted.ref || null,
-      payload_json: JSON.stringify(submitPayload),
+      payload_json: JSON.stringify(redactForLog(constitutional || { summary })),
     });
   }
 
@@ -315,7 +344,9 @@ async function submitGovernance(governance, manifest, stored, sessionId) {
         from_state: sm.STATES.PENDING_SUBMISSION,
         to_state: sm.STATES.SUBMITTED,
         source: sm.SOURCES.BRAIN_SUBMIT,
-        note: 'teaching agent skill proposal submitted to OMStudio',
+        note: procedural
+          ? 'teaching agent PROC-001 workflow proposal submitted to OMStudio'
+          : 'teaching agent skill proposal submitted to OMStudio',
         omstudio_ref: submitted.ref || null,
       });
     }
@@ -326,6 +357,8 @@ async function submitGovernance(governance, manifest, stored, sessionId) {
     approval_id: approvalId,
     omstudio_ref: submitted.ref || null,
     approval_state: submitted.ok ? sm.STATES.SUBMITTED : sm.STATES.PENDING_SUBMISSION,
+    constitutional_gate: procedural ? (constitutional || { ok: false }) : null,
+    execution_allowed: false,
   };
 }
 

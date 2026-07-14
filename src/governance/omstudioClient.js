@@ -53,6 +53,7 @@ const VERIFIED_PATHS = Object.freeze({
   audit:          '/omstudio-embed/api/governance/brain/audit-events',
   approvals:      '/omstudio-embed/api/governance/brain/approval-requests',
   approvalStatus: '/omstudio-embed/api/governance/brain/approval-requests/:ref',
+  workflowProposals: '/omstudio-embed/api/governance/brain/workflow-proposals',
   health:         '/omstudio-embed/api/governance/brain/health',
 });
 
@@ -247,6 +248,65 @@ class OmstudioClient {
       }
       logger.warn('omstudio_approval_error', { name: e && e.name });
       return { ok: false, ref: null, transport: 'http', reason: 'transport_error' };
+    }
+  }
+
+  /**
+   * PROC-001 Constitutional Gate — composite workflow proposal.
+   * Verified endpoint: POST .../workflow-proposals
+   * Runs vault write + library proposal insert + approval create on Studio.
+   *
+   * @returns {Promise<object>} Studio response (+ ok/transport)
+   */
+  async submitWorkflowProposal(proposal) {
+    const payload = redactForLog(proposal || {});
+
+    if (this.transport === 'dryrun') {
+      const { ref } = this._writeOutbox('workflow_proposal', payload);
+      logger.info('omstudio_workflow_proposal_dryrun', { ref });
+      return {
+        ok: true,
+        dry_run: true,
+        gate: 'awaiting_superadmin_approve',
+        execution_allowed: false,
+        content_path: `vault/docs/${(payload.slug || 'proposal')}-proposal-v1.md`,
+        library_record_id: null,
+        documentation_slug: payload.slug || null,
+        is_canonical: 0,
+        approval: { ref, state: 'SUBMITTED' },
+        transport: 'dryrun',
+      };
+    }
+
+    try {
+      const r = await this._httpSend('POST', this._url(this.paths.workflowProposals), payload);
+      const json = r.json || {};
+      logger.info('omstudio_workflow_proposal_http', {
+        status: r.status,
+        ok: r.ok,
+        ref: json.approval && json.approval.ref,
+      });
+      return {
+        ok: r.ok && json.ok !== false,
+        transport: 'http',
+        status: r.status,
+        ...json,
+        execution_allowed: false,
+        gate: json.gate || 'awaiting_superadmin_approve',
+      };
+    } catch (e) {
+      if (e.code === 'CIRCUIT_BREAKER') {
+        logger.warn('omstudio_workflow_proposal_blocked', { reason: e.verdict && e.verdict.reason });
+        return {
+          ok: false,
+          transport: 'http',
+          blocked: true,
+          reason: e.verdict.reason,
+          execution_allowed: false,
+        };
+      }
+      logger.warn('omstudio_workflow_proposal_error', { name: e && e.name });
+      return { ok: false, transport: 'http', reason: 'transport_error', execution_allowed: false };
     }
   }
 
