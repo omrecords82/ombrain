@@ -21,6 +21,25 @@ function hostIpFromName(name) {
 }
 
 /**
+ * Resolve IP for a Nagios host object name.
+ * Prefers explicit IP, then host-A-B-C-D pattern, then inventory/hosts.json by name.
+ */
+function resolveNagiosHostIp(name, explicitIp) {
+  if (explicitIp && String(explicitIp).trim()) return String(explicitIp).trim();
+  const fromPattern = hostIpFromName(name);
+  if (fromPattern) return fromPattern;
+  if (resolveHost && name) {
+    try {
+      const hit = resolveHost(String(name).trim());
+      if (hit && hit.ip) return hit.ip;
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
+/**
  * @param {object} opts
  * @param {string} opts.nagiosHostName  e.g. host-192-168-1-254
  * @param {string|null} [opts.ip]
@@ -30,10 +49,7 @@ function hostIpFromName(name) {
 function resolveNagiosResourceIdentity(opts = {}) {
   const nagiosHostName = String(opts.nagiosHostName || '').trim();
   const serviceName = opts.serviceName != null ? String(opts.serviceName) : null;
-  const ip =
-    (opts.ip && String(opts.ip).trim()) ||
-    hostIpFromName(nagiosHostName) ||
-    null;
+  const ip = resolveNagiosHostIp(nagiosHostName, opts.ip);
 
   let hit = null;
   if (resolveHost) {
@@ -74,4 +90,5 @@ function resolveNagiosResourceIdentity(opts = {}) {
 module.exports = {
   resolveNagiosResourceIdentity,
   hostIpFromName,
+  resolveNagiosHostIp,
 };

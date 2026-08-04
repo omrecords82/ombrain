@@ -4,7 +4,8 @@
 **UI:** `http://192.168.1.40:8080/nagios4/`  
 **JSON CGI:**  
 - Preferred OMBrain path (authenticated local proxy on om-dev): `http://127.0.0.1:18080/nagios4/cgi-bin/statusjson.cgi`  
-- Direct LAN URL (legacy / residual until ops-side auth applied): `http://192.168.1.40:8080/nagios4/cgi-bin/statusjson.cgi`
+- Direct ops URL (Basic auth required — identity `ombrain-nagios-ro`): `http://192.168.1.40:8080/nagios4/cgi-bin/statusjson.cgi`  
+- UI (`/nagios4/`) remains LAN IP allowlisted; only `statusjson.cgi` / `objectjson.cgi` require Basic auth.
 
 Livestatus / NRPE were **not** exposed on `.40` at integration time (ports 6557/5666 closed). Prefer statusjson until livestatus is enabled.
 
@@ -43,11 +44,14 @@ sudo bash /opt/om-brain/deploy/nagios/scripts/install-status-proxy.sh
 sudo systemctl restart om-brain.service
 ```
 
-Ops-side Apache auth snippet (apply when SSH to `.40` is available):
+Ops-side Apache auth (applied on `.40` as `nagios4-statusjson-auth.conf`):
 
-`deploy/nagios/proxy/ops-apache-statusjson-auth.conf`
+`deploy/nagios/proxy/ops-apache-statusjson-auth.conf`  
+Password file on ops: `/etc/nagios4/passwd.ombrain-ro` (same secret as om-dev `/etc/om-brain/nagios-status.password`).
 
-Credential ownership: om-brain service identity `ombrain-nagios-ro`; rotate by regenerating `/etc/om-brain/nagios-status.password` and matching htpasswd; restart om-brain.
+The local nginx proxy forwards `Authorization` upstream so OMBrain → proxy → ops stays authenticated end-to-end.
+
+Credential ownership: om-brain service identity `ombrain-nagios-ro`; rotate by regenerating the password on om-dev **and** rewriting ops `passwd.ombrain-ro`, then restart om-brain / reload nginx+apache.
 
 ## Synthetic fixtures
 
@@ -65,13 +69,27 @@ BRAIN_NAGIOS_NOTIFICATION_DETAIL='...'
 
 Do not treat configured contacts alone as proof of delivery.
 
+## Host naming
+
+Nagios host objects use inventory names (`om-dev`, `om-prod01`, `keycloak`, …).  
+Definitions live in `deploy/nagios/objects/omai-ping.cfg` and `om-services.cfg`.  
+Unmapped IPs `.233` / `.234` keep `host-192-168-1-*` until declared in `inventory/hosts.json`.
+
+OMBrain resolves IPs via `resolveNagiosHostIp` (pattern `host-A-B-C-D` **or** inventory name lookup).
+
 ## Coverage expansion (ops apply)
 
-Service definitions for MariaDB, Keycloak, FreeIPA, NFS, OMBrain webhook, and disk checks:
+Service definitions for MariaDB TCP, Keycloak HTTP, FreeIPA HTTPS, NFS TCP, OMBrain webhook:
 
-`deploy/nagios/objects/ombrain-coverage.cfg`
+`deploy/nagios/objects/ombrain-coverage.cfg` (+ host/service defs above)
 
-Apply on ops, validate (`nagios4 -v`), reload. Requires SSH to `.40` and least-privilege DB monitor credentials for MariaDB.
+Validate with `sudo /usr/sbin/nagios4 -v /etc/nagios4/nagios.cfg` then `sudo systemctl reload nagios4`.
+
+Notes:
+- MariaDB is TCP `:3306` until a `check_mysql` monitor account is provisioned.
+- NFS notifications are disabled while `:2049` is refused from the LAN.
+- Webhook `/health` allowlists ops `.40` (plus localhost and OMStudio `.242`).
+- NRPE disk checks are not enabled (`check_nrpe` not installed on ops).
 
 ## Misleading path (retired)
 

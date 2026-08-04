@@ -16,18 +16,17 @@ const { config } = require('../config');
 const { redactForLog } = require('../ai/redactor');
 const adapterStatus = require('../health/adapterStatus');
 const { resolveTargetIdentity } = require('../ingest/eventIdentity');
-const { resolveNagiosResourceIdentity } = require('../ingest/nagiosResourceIdentity');
+const {
+  resolveNagiosResourceIdentity,
+  resolveNagiosHostIp,
+  hostIpFromName,
+} = require('../ingest/nagiosResourceIdentity');
 const { correlateNagiosEvent } = require('../ingest/nagiosIncidentCorrelator');
 const logger = require('../util/logger');
 
 // Nagios statusjson.cgi bitmasks (Core 4.x)
 const HOST = { PENDING: 1, UP: 2, DOWN: 4, UNREACHABLE: 8 };
 const SVC = { PENDING: 1, OK: 2, WARNING: 4, UNKNOWN: 8, CRITICAL: 16 };
-
-function hostIpFromName(name) {
-  const m = String(name || '').match(/^host-(\d+)-(\d+)-(\d+)-(\d+)$/);
-  return m ? `${m[1]}.${m[2]}.${m[3]}.${m[4]}` : null;
-}
 
 function hostBucket(status) {
   const s = Number(status) || 0;
@@ -438,7 +437,7 @@ class NagiosAdapter {
     for (const [name, row] of Object.entries(hostlist || {})) {
       if (!row || typeof row !== 'object') continue;
       const bucket = hostBucket(row.status);
-      const ip = hostIpFromName(name);
+      const ip = resolveNagiosHostIp(name, row.address || row.ip);
       const inDowntime =
         row.scheduled_downtime_depth != null &&
         Number(row.scheduled_downtime_depth) > 0;
@@ -511,7 +510,7 @@ class NagiosAdapter {
         if (!row || typeof row !== 'object') continue;
         const key = `${hostName}::${svcName}`;
         const bucket = serviceBucket(row.status);
-        const ip = hostIpFromName(hostName);
+        const ip = resolveNagiosHostIp(hostName, row.address || row.ip);
         const inDowntime =
           row.scheduled_downtime_depth != null &&
           Number(row.scheduled_downtime_depth) > 0;

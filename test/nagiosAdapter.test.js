@@ -17,6 +17,16 @@ test('hostIpFromName parses Nagios host objects', () => {
   assert.equal(hostIpFromName('localhost'), null);
 });
 
+test('inventory-named hosts resolve IP and map identity', () => {
+  const { resolveNagiosHostIp, resolveNagiosResourceIdentity } = require('../src/ingest/nagiosResourceIdentity');
+  assert.equal(resolveNagiosHostIp('om-dev'), '192.168.1.254');
+  assert.equal(resolveNagiosHostIp('keycloak'), '192.168.1.253');
+  const id = resolveNagiosResourceIdentity({ nagiosHostName: 'om-prod01' });
+  assert.equal(id.mapping_status, 'mapped');
+  assert.equal(id.canonical_hostname, 'om-prod01');
+  assert.equal(id.ip_address, '192.168.1.239');
+});
+
 test('hostBucket maps statusjson bitmasks', () => {
   assert.equal(hostBucket(HOST.UP), 'up');
   assert.equal(hostBucket(HOST.DOWN), 'down');
