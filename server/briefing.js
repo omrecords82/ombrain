@@ -103,6 +103,22 @@ function buildHealthVerdict(byKey) {
     if (!byKey.actions.ok) degradedReasons.push('actions registry did not respond');
     if (!byKey.governance.ok) degradedReasons.push('governance health did not respond');
     if (!byKey.events.ok) degradedReasons.push('event ledger did not respond');
+
+    const nagios = status?.nagios_monitoring;
+    if (nagios?.enabled) {
+      const freshness = String(nagios.freshness || 'unknown');
+      if (
+        freshness === 'stale' ||
+        freshness === 'monitoring_unavailable' ||
+        freshness === 'unknown' ||
+        nagios.adapter_state === 'error'
+      ) {
+        degradedReasons.push(
+          `Nagios monitoring is ${freshness === 'fresh' ? nagios.adapter_state : freshness} (not healthy)`,
+        );
+      }
+    }
+
     if (degradedReasons.length) {
       verdict = 'degraded';
       reason = `Brain is reachable, but ${degradedReasons.join('; ')}.`;
@@ -179,6 +195,41 @@ function buildOperatorActions(byKey, healthVerdict, eventClusters) {
       navigate_to: 'actions',
       safe_to_act: true,
     });
+  }
+
+  const statusJson = byKey.status.ok ? byKey.status.json : null;
+  const nagios = statusJson?.nagios_monitoring;
+  if (nagios?.enabled) {
+    const freshness = String(nagios.freshness || 'unknown');
+    if (
+      freshness === 'stale' ||
+      freshness === 'monitoring_unavailable' ||
+      freshness === 'unknown' ||
+      nagios.adapter_state === 'error'
+    ) {
+      actions.push({
+        id: 'nagios-monitoring-unavailable',
+        severity: freshness === 'stale' ? 'warning' : 'critical',
+        title: 'Nagios monitoring freshness is not healthy',
+        explanation: `Nagios adapter state=${nagios.adapter_state || 'unknown'}, freshness=${freshness}. Missing or stale monitoring must not be treated as healthy.`,
+        recommended_action:
+          'Verify Nagios on ops (.40:8080/nagios4), BRAIN_ENABLE_NAGIOS_ADAPTER, and recent om-brain logs for nagios_adapter_*.',
+        button_label: 'Open diagnostics',
+        navigate_to: 'diagnostics',
+        safe_to_act: true,
+      });
+    } else if ((nagios.hosts_down || 0) > 0 || (nagios.services_critical || 0) > 0) {
+      actions.push({
+        id: 'nagios-active-problems',
+        severity: 'warning',
+        title: `Nagios reports ${nagios.hosts_down || 0} host(s) down, ${nagios.services_critical || 0} critical service(s)`,
+        explanation: 'Live Nagios statusjson shows active problems. Review the Event Ledger for nagios-sourced transitions.',
+        recommended_action: 'Open Events and filter source=nagios; correlate with Nagios UI on ops.',
+        button_label: 'Open events',
+        navigate_to: 'events',
+        safe_to_act: true,
+      });
+    }
   }
 
   if (!byKey.governance.ok) {
@@ -314,10 +365,33 @@ const CAPABILITY_DEFS = [
   { id: 'drafts', capability: 'Draft Work Items', category: 'Draft Work Items', gate: 'Human-gated' },
   { id: 'governance', capability: 'Governance', category: 'Governance', gate: 'Human-gated' },
   { id: 'diagnostics', capability: 'Diagnostics', category: 'Diagnostics', gate: 'Diagnostic' },
+  { id: 'nagios', capability: 'Nagios monitoring ingest', category: 'Diagnostics', gate: 'Read-only' },
 ];
 
 function buildCapabilityReadiness(byKey, healthVerdict, nowIso) {
   const state = (ok) => (ok ? 'available' : 'blocked');
+  const statusJson = byKey.status.ok ? byKey.status.json : null;
+  const nagios = statusJson?.nagios_monitoring;
+
+  let nagiosState = 'pending';
+  let nagiosReason = 'Nagios monitoring signal not present on /status';
+  if (!byKey.status.ok) {
+    nagiosState = 'unknown';
+    nagiosReason = 'Runtime status probe failed — Nagios freshness unknown (not healthy)';
+  } else if (!nagios || nagios.enabled === false) {
+    nagiosState = 'partial';
+    nagiosReason = 'Nagios adapter disabled — monitoring unavailable (not healthy)';
+  } else if (
+    nagios.freshness === 'fresh' &&
+    nagios.adapter_state === 'ok' &&
+    nagios.integration_health === 'ok'
+  ) {
+    nagiosState = 'available';
+    nagiosReason = `Nagios ingest fresh — ${nagios.hosts_total ?? '?'} hosts, ${nagios.hosts_down ?? 0} down, ${nagios.services_critical ?? 0} critical`;
+  } else {
+    nagiosState = 'partial';
+    nagiosReason = `Nagios freshness=${nagios.freshness || 'unknown'} state=${nagios.adapter_state || 'unknown'} (not treated as healthy)`;
+  }
 
   const map = {
     ask: {
@@ -341,7 +415,7 @@ function buildCapabilityReadiness(byKey, healthVerdict, nowIso) {
     },
     churches: {
       state: 'partial',
-      reason: 'Live vs. cache-only depends on GOOGLE_PLACES_API_KEY — not actively probed this cycle',
+      reason: 'Live vs. cache-only depends on GOOGLE_PLACES_API_KEY — config-missing until key is present (not probed as healthy)',
       last_verified: 'not probed this cycle',
     },
     skills: {
@@ -368,6 +442,11 @@ function buildCapabilityReadiness(byKey, healthVerdict, nowIso) {
       state: healthVerdict.brain_online ? 'available' : 'blocked',
       reason: healthVerdict.brain_online ? 'Brain reachable for bounded diagnostic probes' : 'Brain unreachable — diagnostics cannot reach upstream',
       last_verified: nowIso,
+    },
+    nagios: {
+      state: nagiosState,
+      reason: nagiosReason,
+      last_verified: nagios?.last_ok_at || nowIso,
     },
   };
 

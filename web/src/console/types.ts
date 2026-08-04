@@ -145,7 +145,14 @@ export interface VerifiedCapabilityGroup {
   items: VerifiedCapabilityItem[];
 }
 
-export type BlockerCategory = 'blocked' | 'not-built' | 'config-missing';
+export type BlockerCategory =
+  | 'blocked'
+  | 'not-built'
+  | 'config-missing'
+  | 'security-boundary'
+  | 'monitoring-unavailable'
+  | 'unknown'
+  | 'intentionally-disabled';
 
 export interface BlockerItem {
   id: string;
