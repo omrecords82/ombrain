@@ -102,6 +102,15 @@ const config = Object.freeze({
     enableEventAdapter: bool(env.BRAIN_ENABLE_EVENT_ADAPTER, false),
     enableInventoryAdapter: bool(env.BRAIN_ENABLE_INVENTORY_ADAPTER, false),
     enableLogAdapter: bool(env.BRAIN_ENABLE_LOG_ADAPTER, false),
+    // Nagios Core JSON CGI — fleet health source of truth (ops / 192.168.1.40).
+    enableNagiosAdapter: bool(env.BRAIN_ENABLE_NAGIOS_ADAPTER, false),
+    nagiosStatusjsonUrl:
+      env.BRAIN_NAGIOS_STATUSJSON_URL ||
+      'http://192.168.1.40:8080/nagios4/cgi-bin/statusjson.cgi',
+    nagiosPollMs: num(env.BRAIN_NAGIOS_POLL_MS, 60000),
+    nagiosCheckedFrom: env.BRAIN_NAGIOS_CHECKED_FROM || 'ops-nagios',
+    // Drop misleading platform_inventory host/health events when Nagios is SoT.
+    suppressInventoryHealthEvents: bool(env.BRAIN_SUPPRESS_INVENTORY_HEALTH_EVENTS, true),
     // Shared secret for POST /brain/ingest/event (falls back to OMSTUDIO_WEBHOOK_SECRET).
     ingestSecret: env.BRAIN_INGEST_SECRET || env.OMSTUDIO_WEBHOOK_SECRET || '',
   },

@@ -15,6 +15,17 @@ const adapterStatus = require('../health/adapterStatus');
 const { resolveTargetIdentity } = require('../ingest/eventIdentity');
 const logger = require('../util/logger');
 
+/** Inventory probe flaps — Nagios is the monitoring source of truth. */
+const INVENTORY_HEALTH_EVENT_RE =
+  /^(host\.(unreachable|recovered)|platform\.health\.(improved|degraded))$/i;
+
+function shouldDropInventoryHealthEvent(safe) {
+  if (!config.ingest.suppressInventoryHealthEvents) return false;
+  const sourceSystem = String(safe.source_system || '').toLowerCase();
+  if (sourceSystem !== 'platform_inventory') return false;
+  return INVENTORY_HEALTH_EVENT_RE.test(String(safe.event_type || ''));
+}
+
 class EventAdapter {
   /**
    * @param {object} deps { db, fetchImpl }
@@ -60,6 +71,9 @@ class EventAdapter {
       const items = Array.isArray(data) ? data : data.events || data.runs || [];
       for (const raw of items) {
         const safe = redactForLog(raw);
+        if (source === 'events' && shouldDropInventoryHealthEvent(safe)) {
+          continue;
+        }
         const eventType = safe.event_type || safe.status || null;
         // Resolve target identity (registry-enriched) before persistence so
         // host reachability events always carry target_name/target_ip.

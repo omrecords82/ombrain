@@ -18,6 +18,7 @@ const { GovernanceManager } = require('./governance/governanceManager');
 const { EventAdapter } = require('./adapters/eventAdapter');
 const { InventoryAdapter } = require('./adapters/inventoryAdapter');
 const { LogAdapter } = require('./adapters/logAdapter');
+const { NagiosAdapter } = require('./adapters/nagiosAdapter');
 const { createWorkshopClient, probeWorkshopStatus } = require('./adapters/workshopRuntime');
 const { AuditorLoop } = require('./auditor/auditorLoop');
 const { CronManager } = require('./cron/cronManager');
@@ -112,9 +113,11 @@ async function boot() {
   const eventAdapter = new EventAdapter({ db });
   const inventoryAdapter = new InventoryAdapter({ db, governance });
   const logAdapter = new LogAdapter({ db });
+  const nagiosAdapter = new NagiosAdapter({ db });
   eventAdapter.start();
   inventoryAdapter.start();
   logAdapter.start();
+  nagiosAdapter.start();
 
   const auditor = new AuditorLoop({ db, orchestrator });
   auditor.start();
@@ -139,6 +142,7 @@ async function boot() {
     eventAdapter.stop();
     inventoryAdapter.stop();
     logAdapter.stop();
+    nagiosAdapter.stop();
     server.close(() => {
       db.close();
       process.exit(0);

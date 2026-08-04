@@ -26,6 +26,9 @@ Group=om-brain
 # --- Code + working dir ---
 WorkingDirectory=/opt/om-brain
 EnvironmentFile=/etc/om-brain/om-brain.env
+# Operator locale: Eastern Time (EST/EDT). Storage remains UTC ISO where explicit;
+# process-local Date/localtime and console display use America/New_York.
+Environment=TZ=America/New_York
 ExecStartPre=/usr/bin/node /opt/om-brain/scripts/init-db.js
 ExecStart=/usr/bin/node /opt/om-brain/src/index.js
 Restart=on-failure
