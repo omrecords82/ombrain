@@ -201,19 +201,29 @@ function buildOperatorActions(byKey, healthVerdict, eventClusters) {
   const nagios = statusJson?.nagios_monitoring;
   if (nagios?.enabled) {
     const freshness = String(nagios.freshness || 'unknown');
+    const authFailed =
+      nagios.adapter_state === 'auth_error' ||
+      nagios.integration_health === 'auth_failed' ||
+      nagios.authentication?.last_result === 'auth_failed';
     if (
       freshness === 'stale' ||
       freshness === 'monitoring_unavailable' ||
       freshness === 'unknown' ||
-      nagios.adapter_state === 'error'
+      nagios.adapter_state === 'error' ||
+      authFailed
     ) {
       actions.push({
         id: 'nagios-monitoring-unavailable',
         severity: freshness === 'stale' ? 'warning' : 'critical',
-        title: 'Nagios monitoring freshness is not healthy',
-        explanation: `Nagios adapter state=${nagios.adapter_state || 'unknown'}, freshness=${freshness}. Missing or stale monitoring must not be treated as healthy.`,
-        recommended_action:
-          'Verify Nagios on ops (.40:8080/nagios4), BRAIN_ENABLE_NAGIOS_ADAPTER, and recent om-brain logs for nagios_adapter_*.',
+        title: authFailed
+          ? 'Nagios status authentication failed'
+          : 'Nagios monitoring freshness is not healthy',
+        explanation: authFailed
+          ? `Nagios status access failed authentication (freshness=${freshness}). Monitoring must be reported unavailable, not healthy.`
+          : `Nagios adapter state=${nagios.adapter_state || 'unknown'}, freshness=${freshness}. Missing or stale monitoring must not be treated as healthy.`,
+        recommended_action: authFailed
+          ? 'Verify BRAIN_NAGIOS_STATUS_USER / password file and the local status proxy on 127.0.0.1:18080.'
+          : 'Verify Nagios on ops (.40:8080/nagios4), BRAIN_ENABLE_NAGIOS_ADAPTER, and recent om-brain logs for nagios_adapter_*.',
         button_label: 'Open diagnostics',
         navigate_to: 'diagnostics',
         safe_to_act: true,
@@ -223,10 +233,37 @@ function buildOperatorActions(byKey, healthVerdict, eventClusters) {
         id: 'nagios-active-problems',
         severity: 'warning',
         title: `Nagios reports ${nagios.hosts_down || 0} host(s) down, ${nagios.services_critical || 0} critical service(s)`,
-        explanation: 'Live Nagios statusjson shows active problems. Review the Event Ledger for nagios-sourced transitions.',
+        explanation:
+          'Live Nagios statusjson shows active problems (synthetic fixtures excluded from totals). Review the Event Ledger for nagios-sourced observations including initial_reconciliation.',
         recommended_action: 'Open Events and filter source=nagios; correlate with Nagios UI on ops.',
         button_label: 'Open events',
         navigate_to: 'events',
+        safe_to_act: true,
+      });
+    }
+    if ((nagios.mapping?.unmapped || 0) > 0) {
+      actions.push({
+        id: 'nagios-unmapped-resources',
+        severity: 'info',
+        title: `${nagios.mapping.unmapped} Nagios host(s) lack canonical inventory mapping`,
+        explanation: 'Unmapped Nagios objects remain visible with mapping_status=unmapped; hostnames are not invented.',
+        recommended_action: 'Extend inventory/hosts.json aliases for the unmapped IPs, then restart om-brain.',
+        button_label: 'Open diagnostics',
+        navigate_to: 'diagnostics',
+        safe_to_act: true,
+      });
+    }
+    const nStatus = String(nagios.notification?.status || 'unverified');
+    if (nStatus === 'failed' || nStatus === 'degraded' || nStatus === 'unverified') {
+      actions.push({
+        id: 'nagios-notification-status',
+        severity: nStatus === 'failed' ? 'warning' : 'info',
+        title: `Nagios notification delivery is ${nStatus}`,
+        explanation: nagios.notification?.detail ||
+          'Configured contacts are not proof of delivery. Complete a controlled end-to-end notification test on ops.',
+        recommended_action: 'Run a controlled custom notification on ops and update BRAIN_NAGIOS_NOTIFICATION_STATUS.',
+        button_label: 'Open diagnostics',
+        navigate_to: 'diagnostics',
         safe_to_act: true,
       });
     }
