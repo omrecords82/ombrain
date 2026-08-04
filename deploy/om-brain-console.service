@@ -10,6 +10,8 @@ User=next
 Group=next
 WorkingDirectory=/opt/om-brain-console
 EnvironmentFile=/etc/om-brain/console.env
+# Operator locale: Eastern Time (EST/EDT via America/New_York).
+Environment=TZ=America/New_York
 ExecStart=/usr/bin/node /opt/om-brain-console/server/index.js
 Restart=on-failure
 RestartSec=5

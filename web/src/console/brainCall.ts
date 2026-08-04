@@ -7,12 +7,34 @@ export function requestId(): string {
   return `req_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+const OPERATOR_TZ = 'America/New_York';
+
+/** Operator-facing timestamps in Eastern (EST/EDT). */
 export function formatTimestamp(d = new Date()): string {
-  return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: OPERATOR_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || '';
+  const tz = get('timeZoneName') || 'ET';
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')} ${tz}`;
 }
 
 export function formatTimeShort(d = new Date()): string {
-  return d.toISOString().slice(11, 19);
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: OPERATOR_TZ,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(d);
 }
 
 function resultStatus(err: unknown, data: unknown): ResultData['status'] {

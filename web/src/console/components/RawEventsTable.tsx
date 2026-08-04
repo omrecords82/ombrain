@@ -88,7 +88,8 @@ function extractEventSummary(payload: Record<string, unknown> | null, row: Brain
 function formatTime(value?: string) {
   if (!value) return '—';
   const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? value : d.toLocaleString();
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString('en-US', { timeZone: 'America/New_York' });
 }
 
 function DetailLine({ label, value }: { label: string; value: string | null | undefined }) {
