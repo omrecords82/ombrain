@@ -62,12 +62,19 @@ Objects/services whose names contain `fixture` / `OMBrain-Fixture` are marked `s
 `/status.nagios_monitoring.notification.status` is one of `unverified|verified|degraded|failed`. Update via env after a controlled test:
 
 ```bash
-BRAIN_NAGIOS_NOTIFICATION_STATUS=degraded
+BRAIN_NAGIOS_NOTIFICATION_STATUS=verified
 BRAIN_NAGIOS_NOTIFICATION_LAST_TESTED_AT=...
 BRAIN_NAGIOS_NOTIFICATION_DETAIL='...'
 ```
 
 Do not treat configured contacts alone as proof of delivery.
+
+### Ops notification path (verified 2026-08-04)
+
+- Contact `nagiosadmin` uses `notify-*-by-receipt` → `/var/log/nagios4/notification-receipt.log` (local sink). Email/`msmtp` remains unconfigured (`account default not found`) — restore SMTP separately before relying on mail.
+- `cmd.cgi` requires Digest auth (`nagiosadmin` in `/etc/nagios4/htdigest.users`; password file `/etc/nagios4/cmd-cgi.password`). CSRF stays fail-closed: GET form for `NagFormId` cookie + POST `nagFormId`.
+- CGI `use_authentication=1` with `default_user_name=guest` (read-only). `ombrain-nagios-ro` is authorized for host/service reads so statusjson keeps working.
+- Safe tests: `SEND_CUSTOM_SVC_NOTIFICATION` via `nagios.cmd`, or authenticated CSRF `cmd.cgi` custom notification.
 
 ## Host naming
 
@@ -86,7 +93,7 @@ Service definitions for MariaDB TCP, Keycloak HTTP, FreeIPA HTTPS, Samba/CIFS TC
 Validate with `sudo /usr/sbin/nagios4 -v /etc/nagios4/nagios.cfg` then `sudo systemctl reload nagios4`.
 
 Notes:
-- MariaDB is TCP `:3306` until a `check_mysql` monitor account is provisioned.
+- MariaDB (`om-dbp01` / `.241`) uses authenticated `check_mysql` via ops-private `/etc/nagios4/mysql-monitor.cnf` (user `nagios_monitor@192.168.1.40`, USAGE+PROCESS). Do not commit the password; `$USER3$`/`$USER4$` also hold the same identity in `resource.cfg` (mode `640` root:nagios).
 - om-sh1 (`.79`) is Samba/CIFS only (no NFS). Coverage checks TCP `:445` and `:139`; there is no `:2049` NFS check. Notifications enabled when Samba ports are healthy from ops.
 - Webhook `/health` allowlists ops `.40` (plus localhost and OMStudio `.242`).
 - NRPE disk checks are not enabled (`check_nrpe` not installed on ops).
@@ -119,6 +126,16 @@ Nagios Core on ops (.40)
 - Bad observations open or update the same incident (no duplicates for repeated hard CRITICAL).
 - Idempotent event keys prevent duplicate rows for the same fingerprint.
 - Recovery closes only on verified Nagios OK/UP (`recovered_verified=true`).
+- After Nagios host rename or service object removal, old object keys will not receive a recovery transition. Close superseded/removed open incidents with operator hygiene (does not invent SoT recovery):
+
+```bash
+sudo -u om-brain cp /var/lib/om-brain/brain.db \
+  /var/lib/om-brain/brain.db.pre-incident-hygiene-$(date -u +%Y%m%dT%H%M%SZ)
+sudo -u om-brain node /opt/om-brain/scripts/reconcile-stale-nagios-incidents.js --dry-run
+sudo -u om-brain node /opt/om-brain/scripts/reconcile-stale-nagios-incidents.js --apply-defaults
+```
+
+Keep real current problems on the renamed hosts and other live WARNING/CRITICAL objects.
 
 ## Enable on om-dev
 
