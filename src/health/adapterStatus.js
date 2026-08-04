@@ -28,9 +28,20 @@ function ensure(name) {
       last_error: null,
       last_poll_at: null,
       last_ok_at: null,
+      // Optional integration freshness (used by nagios).
+      meta: null,
     };
   }
   return adapters[name];
+}
+
+/**
+ * Attach non-secret integration metrics (host/service counts, freshness).
+ * Does not change poll state by itself — call recordPoll separately.
+ */
+function recordMeta(name, meta) {
+  const row = ensure(name);
+  row.meta = meta && typeof meta === 'object' ? { ...meta } : null;
 }
 
 function setOpsAuthContext(jwtAssessment) {
@@ -119,7 +130,9 @@ function recordPoll(name, { ok, status, error } = {}) {
 function snapshot() {
   const out = {};
   for (const [name, row] of Object.entries(adapters)) {
-    out[name] = applyOpsAuthOverlay(row);
+    const overlaid = applyOpsAuthOverlay(row);
+    if (row.meta) overlaid.meta = { ...row.meta };
+    out[name] = overlaid;
   }
   return out;
 }
@@ -132,6 +145,7 @@ module.exports = {
   setEnabled,
   setOpsAuthContext,
   recordPoll,
+  recordMeta,
   snapshot,
   uptimeSec,
   startedAt,

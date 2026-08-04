@@ -109,6 +109,8 @@ const config = Object.freeze({
       'http://192.168.1.40:8080/nagios4/cgi-bin/statusjson.cgi',
     nagiosPollMs: num(env.BRAIN_NAGIOS_POLL_MS, 60000),
     nagiosCheckedFrom: env.BRAIN_NAGIOS_CHECKED_FROM || 'ops-nagios',
+    // After this age without a successful poll, /status reports freshness=stale.
+    nagiosStaleMs: num(env.BRAIN_NAGIOS_STALE_MS, 180000),
     // Drop misleading platform_inventory host/health events when Nagios is SoT.
     suppressInventoryHealthEvents: bool(env.BRAIN_SUPPRESS_INVENTORY_HEALTH_EVENTS, true),
     // Shared secret for POST /brain/ingest/event (falls back to OMSTUDIO_WEBHOOK_SECRET).

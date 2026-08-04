@@ -288,7 +288,7 @@ class MemoryDB {
     target_identity_status,
   }) {
     if (this.backend === 'sqlite') {
-      this.sqlite
+      const info = this.sqlite
         .prepare(
           `INSERT INTO event_memory (
              source, event_type, severity, church_id, correlation, payload_json,
@@ -311,10 +311,11 @@ class MemoryDB {
           checked_from || null,
           target_identity_status || null,
         );
-      return;
+      return { id: Number(info.lastInsertRowid) };
     }
+    const id = ++this.json._seq.event;
     this.json.event_memory.push({
-      id: ++this.json._seq.event,
+      id,
       source,
       event_type: event_type || null,
       severity: severity || null,
@@ -331,6 +332,7 @@ class MemoryDB {
       observed_at: new Date().toISOString(),
     });
     this._persistJson();
+    return { id };
   }
 
   recentEvents(limit = 50) {
@@ -340,25 +342,79 @@ class MemoryDB {
     return this.json.event_memory.slice(-limit).reverse();
   }
 
+  /**
+   * Idempotency helper: true when an identical Nagios transition was stored
+   * recently (same source + correlation + event_type + from/to fingerprint).
+   */
+  hasRecentEventFingerprint({ source, correlation, event_type, fingerprint, withinSeconds = 3600 }) {
+    if (!correlation || !event_type || !fingerprint) return false;
+    if (this.backend === 'sqlite') {
+      const rows = this.sqlite
+        .prepare(
+          `SELECT payload_json FROM event_memory
+           WHERE source = ? AND correlation = ? AND event_type = ?
+             AND observed_at >= datetime('now', ?)
+           ORDER BY id DESC LIMIT 25`,
+        )
+        .all(source, correlation, event_type, `-${Math.max(1, withinSeconds)} seconds`);
+      return rows.some((r) => {
+        try {
+          const p = JSON.parse(r.payload_json);
+          return p && p.idempotency_key === fingerprint;
+        } catch (_) {
+          return false;
+        }
+      });
+    }
+    const cutoff = Date.now() - withinSeconds * 1000;
+    return this.json.event_memory.some((r) => {
+      if (r.source !== source || r.correlation !== correlation || r.event_type !== event_type) return false;
+      const ts = Date.parse(r.observed_at || '') || 0;
+      if (ts < cutoff) return false;
+      try {
+        const p = JSON.parse(r.payload_json);
+        return p && p.idempotency_key === fingerprint;
+      } catch (_) {
+        return false;
+      }
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Work memory
   // -------------------------------------------------------------------------
-  upsertWorkSession({ session_id, work_item_ref, incident_tier, state, context_json }) {
+  upsertWorkSession({ session_id, work_item_ref, incident_tier, state, context_json, correlation_id }) {
     if (this.backend === 'sqlite') {
       this.sqlite
         .prepare(
-          `INSERT INTO work_memory (session_id, work_item_ref, incident_tier, state, context_json)
-           VALUES (?, ?, ?, ?, ?)
+          `INSERT INTO work_memory (session_id, work_item_ref, incident_tier, state, context_json, correlation_id)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT(session_id) DO UPDATE SET
              work_item_ref=excluded.work_item_ref, incident_tier=excluded.incident_tier,
-             state=excluded.state, context_json=excluded.context_json, updated_at=datetime('now')`,
+             state=excluded.state, context_json=excluded.context_json,
+             correlation_id=COALESCE(excluded.correlation_id, work_memory.correlation_id),
+             updated_at=datetime('now')`,
         )
-        .run(session_id, work_item_ref || null, incident_tier || null, state, context_json);
+        .run(
+          session_id,
+          work_item_ref || null,
+          incident_tier || null,
+          state,
+          context_json,
+          correlation_id || null,
+        );
       return;
     }
     const existing = this.json.work_memory.find((r) => r.session_id === session_id);
     if (existing) {
-      Object.assign(existing, { work_item_ref, incident_tier, state, context_json, updated_at: new Date().toISOString() });
+      Object.assign(existing, {
+        work_item_ref,
+        incident_tier,
+        state,
+        context_json,
+        correlation_id: correlation_id || existing.correlation_id || null,
+        updated_at: new Date().toISOString(),
+      });
     } else {
       this.json.work_memory.push({
         id: ++this.json._seq.work,
@@ -367,11 +423,20 @@ class MemoryDB {
         incident_tier: incident_tier || null,
         state,
         context_json,
+        correlation_id: correlation_id || null,
         opened_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
     }
     this._persistJson();
+  }
+
+  getWorkSession(session_id) {
+    if (!session_id) return null;
+    if (this.backend === 'sqlite') {
+      return this.sqlite.prepare('SELECT * FROM work_memory WHERE session_id = ?').get(session_id) || null;
+    }
+    return this.json.work_memory.find((r) => r.session_id === session_id) || null;
   }
 
   // -------------------------------------------------------------------------

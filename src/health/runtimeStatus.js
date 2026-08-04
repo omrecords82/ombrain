@@ -73,6 +73,40 @@ async function buildRuntimeStatus(deps = {}) {
       last_poll_at: row.last_poll_at,
     }));
 
+  const nagiosAdapter = adapters.nagios || null;
+  const nagiosMeta = (nagiosAdapter && nagiosAdapter.meta) || null;
+  let nagiosMonitoring = {
+    enabled: !!(config.ingest && config.ingest.enableNagiosAdapter),
+    adapter_state: nagiosAdapter ? nagiosAdapter.state : 'absent',
+    freshness: nagiosMeta?.freshness || (config.ingest?.enableNagiosAdapter ? 'unknown' : 'disabled'),
+    integration_health:
+      nagiosMeta?.integration_health ||
+      (config.ingest?.enableNagiosAdapter ? 'unknown' : 'disabled'),
+    last_ok_at: nagiosAdapter ? nagiosAdapter.last_ok_at : null,
+    last_poll_at: nagiosAdapter ? nagiosAdapter.last_poll_at : null,
+    last_error: nagiosAdapter ? nagiosAdapter.last_error : null,
+    hosts_total: nagiosMeta?.hosts_total ?? null,
+    hosts_down: nagiosMeta?.hosts_down ?? null,
+    services_total: nagiosMeta?.services_total ?? null,
+    services_critical: nagiosMeta?.services_critical ?? null,
+    services_warning: nagiosMeta?.services_warning ?? null,
+    services_unknown: nagiosMeta?.services_unknown ?? null,
+    last_event_at: nagiosMeta?.last_event_at ?? null,
+  };
+  // Never present missing monitoring as healthy.
+  if (
+    nagiosMonitoring.enabled &&
+    (nagiosMonitoring.freshness === 'unknown' ||
+      nagiosMonitoring.freshness === 'stale' ||
+      nagiosMonitoring.freshness === 'monitoring_unavailable' ||
+      nagiosMonitoring.adapter_state === 'error' ||
+      nagiosMonitoring.adapter_state === 'disabled')
+  ) {
+    if (nagiosMonitoring.integration_health === 'ok') {
+      nagiosMonitoring.integration_health = nagiosMonitoring.freshness || 'unknown';
+    }
+  }
+
   const nats = await probeNats();
   const pkg = require('../../package.json');
 
@@ -106,6 +140,7 @@ async function buildRuntimeStatus(deps = {}) {
       needs_attention: shouldWarnOpsAuth(jwtAssessment),
     },
     adapters,
+    nagios_monitoring: nagiosMonitoring,
     recent_auth_errors: recentAuthErrors,
   };
 }
