@@ -366,6 +366,7 @@ class MemoryDB {
         }
       });
     }
+    if (!this.json || !Array.isArray(this.json.event_memory)) return false;
     const cutoff = Date.now() - withinSeconds * 1000;
     return this.json.event_memory.some((r) => {
       if (r.source !== source || r.correlation !== correlation || r.event_type !== event_type) return false;

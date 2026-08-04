@@ -54,7 +54,7 @@ function memoryDb() {
 function liveDb() {
   const { MemoryDB } = require('../src/memory/db');
   const dbPath = process.env.BRAIN_DB_PATH || '/var/lib/om-brain/brain.db';
-  return new MemoryDB({ dbPath });
+  return new MemoryDB({ dbPath }).init();
 }
 
 async function main() {
