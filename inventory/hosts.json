@@ -216,12 +216,13 @@
         "nas-backups.local",
         "nas-backups"
       ],
-      "role": "NFS / backup share",
+      "role": "Samba/CIFS fileserver / backup share",
       "environment": "infrastructure",
       "key_ports": [
-        2049
+        445,
+        139
       ],
-      "notes": "QNAP NFS; backups under /backups on .239"
+      "notes": "QNAP Samba/CIFS (no NFS); share //192.168.1.79/OM-backups; backups under /backups on .239. Alias backup-nfs is legacy naming only."
     },
     {
       "name": "ops",

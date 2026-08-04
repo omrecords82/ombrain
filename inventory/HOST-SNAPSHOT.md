@@ -35,7 +35,7 @@ Canonical coordination map: `docs/coordination/README-CURSOR.md`.
 | auth01 | `192.168.1.252` | FreeIPA (identity management) | `auth01` → `192.168.1.252` | `:443` reachable<br>`:88` reachable | match |
 | keycloak | `192.168.1.253` | Keycloak (Docker OIDC) | `keycloak` → `192.168.1.253`<br>`auth1.om.internal` → _ENOTFOUND_ | `:8080` reachable | match |
 | om-dev | `192.168.1.254` | om-brain service host | `om-dev` → `192.168.1.254`<br>`omdev` → `127.0.1.1`<br>`sso` → `192.168.1.254` | `:8390` reachable<br>`:8391` reachable | match _(info: local loopback resolution (127.0.1.1) — LAN A-record also present via alias)_ |
-| om-sh1 | `192.168.1.79` | NFS / backup share | `om-sh1` → `192.168.1.79` | `:2049` reachable | match |
+| om-sh1 | `192.168.1.79` | Samba/CIFS fileserver / backup share | `om-sh1` → `192.168.1.79` | `:445` reachable<br>`:139` reachable | match |
 | ops | `192.168.1.40` | omai-ops deploy scripts host | `ops` → `192.168.1.40` | `:22` reachable | match |
 
 ## vegu
@@ -285,15 +285,17 @@ Canonical coordination map: `docs/coordination/README-CURSOR.md`.
 | Field | Value |
 |-------|-------|
 | Declared IP | `192.168.1.79` |
-| Role | NFS / backup share |
+| Role | Samba/CIFS fileserver / backup share |
 | DNS drift | `match` |
-| Verified at | 2026-06-28T23:40:53.404Z |
+| Verified at | 2026-08-04T21:49:00.000Z |
 
 ### Port reachability
 
 | Port | Status | Verified at |
 |------|--------|-------------|
-| 2049 | reachable | 2026-06-28T23:40:53.404Z |
+| 445 | reachable | 2026-08-04T21:49:00.000Z |
+| 139 | reachable | 2026-08-04T21:49:00.000Z |
+| 2049 | refused (NFS not used) | 2026-08-04T21:49:00.000Z |
 
 ### DNS resolution
 

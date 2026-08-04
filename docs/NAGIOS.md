@@ -79,7 +79,7 @@ OMBrain resolves IPs via `resolveNagiosHostIp` (pattern `host-A-B-C-D` **or** in
 
 ## Coverage expansion (ops apply)
 
-Service definitions for MariaDB TCP, Keycloak HTTP, FreeIPA HTTPS, NFS TCP, OMBrain webhook:
+Service definitions for MariaDB TCP, Keycloak HTTP, FreeIPA HTTPS, Samba/CIFS TCP, OMBrain webhook:
 
 `deploy/nagios/objects/ombrain-coverage.cfg` (+ host/service defs above)
 
@@ -87,9 +87,10 @@ Validate with `sudo /usr/sbin/nagios4 -v /etc/nagios4/nagios.cfg` then `sudo sys
 
 Notes:
 - MariaDB is TCP `:3306` until a `check_mysql` monitor account is provisioned.
-- NFS notifications are disabled while `:2049` is refused from the LAN.
+- om-sh1 (`.79`) is Samba/CIFS only (no NFS). Coverage checks TCP `:445` and `:139`; there is no `:2049` NFS check. Notifications enabled when Samba ports are healthy from ops.
 - Webhook `/health` allowlists ops `.40` (plus localhost and OMStudio `.242`).
 - NRPE disk checks are not enabled (`check_nrpe` not installed on ops).
+- `check_disk_smb` exists on ops but needs share credentials; not enabled (prefer TCP probes).
 
 ## Misleading path (retired)
 
