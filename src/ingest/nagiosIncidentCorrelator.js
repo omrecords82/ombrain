@@ -69,12 +69,49 @@ function correlateNagiosEvent(db, evt) {
   };
 
   if (isBad) {
+    const payload = evt.payload || {};
+    const inDowntime = payload.downtime_state === true;
+    // Scheduled downtime: do not open actionable incidents unless policy flips.
+    // Still allow updates when an incident is already open.
     const alreadyOpen =
       existing &&
       existing.state &&
       !['closed', 'resolved'].includes(String(existing.state));
+
+    if (inDowntime && !alreadyOpen) {
+      context.opened_by = priorContext.opened_by || eventType;
+      context.recovered_verified = false;
+      context.suppressed_reason = 'scheduled_downtime';
+      context.acknowledgement_state =
+        payload.acknowledgement_state != null ? !!payload.acknowledgement_state : null;
+      context.observation_origin = payload.observation_origin || null;
+      context.synthetic = !!payload.synthetic;
+      return {
+        action: 'suppressed_downtime',
+        session_id,
+        state: existing ? existing.state : null,
+      };
+    }
+
     context.opened_by = priorContext.opened_by || eventType;
     context.recovered_verified = false;
+    context.acknowledgement_state =
+      payload.acknowledgement_state != null
+        ? !!payload.acknowledgement_state
+        : priorContext.acknowledgement_state != null
+          ? priorContext.acknowledgement_state
+          : null;
+    context.downtime_state =
+      payload.downtime_state != null ? !!payload.downtime_state : priorContext.downtime_state || false;
+    context.observation_origin = payload.observation_origin || priorContext.observation_origin || null;
+    context.synthetic = payload.synthetic != null ? !!payload.synthetic : !!priorContext.synthetic;
+    context.transition_observed =
+      payload.transition_observed != null
+        ? !!payload.transition_observed
+        : priorContext.transition_observed;
+    if (payload.resource_identity) {
+      context.resource_identity = payload.resource_identity;
+    }
     db.upsertWorkSession({
       session_id,
       work_item_ref: nagiosObject,

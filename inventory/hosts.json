@@ -54,7 +54,8 @@
         "om-primary",
         "om-primary.local",
         "om",
-        "omai"
+        "omai",
+        "om-prod01.om.internal"
       ],
       "role": "OM + OMAI production edge",
       "environment": "production",
@@ -227,7 +228,9 @@
       "ip": "192.168.1.40",
       "aliases": [
         "omai-ops",
-        "ops.om.internal"
+        "ops.om.internal",
+        "omai-ops01",
+        "omai-ops01.om.internal"
       ],
       "role": "omai-ops deploy scripts host",
       "environment": "infrastructure",

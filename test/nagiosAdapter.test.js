@@ -65,7 +65,7 @@ function memoryDb() {
   };
 }
 
-test('baseline poll does not emit; transition creates one event and one incident', () => {
+test('healthy baseline emits nothing; transition creates one event and one incident', () => {
   const db = memoryDb();
   const adapter = new NagiosAdapter({ db });
   const host = 'host-192-168-1-240';
@@ -87,8 +87,11 @@ test('baseline poll does not emit; transition creates one event and one incident
   assert.equal(payload.source_system, 'nagios');
   assert.equal(payload.previous_state, 'up');
   assert.equal(payload.current_state, 'down');
+  assert.equal(payload.observation_origin, 'transition');
+  assert.equal(payload.synthetic, false);
   assert.ok(payload.idempotency_key);
   assert.ok(payload.normalized_resource_identity);
+  assert.ok(payload.resource_identity);
 
   const session = db.getWorkSession(sessionIdFor(`host:${host}`));
   assert.ok(session);
@@ -243,4 +246,161 @@ test('pollOnce with fixture fetch records monitoring snapshot meta', async () =>
   assert.equal(snap.meta.hosts_total, 1);
   assert.equal(snap.meta.services_warning, 1);
   assert.equal(snap.meta.freshness, 'fresh');
+});
+
+
+test('initial reconciliation creates incident for host already DOWN', () => {
+  const db = memoryDb();
+  const adapter = new NagiosAdapter({ db });
+  const host = 'host-192-168-1-101';
+  const emitted = adapter.applyHostlist({
+    [host]: {
+      status: HOST.DOWN,
+      plugin_output: 'CRITICAL - Host Unreachable',
+      last_check: Date.now(),
+      problem_has_been_acknowledged: 0,
+      scheduled_downtime_depth: 0,
+      current_attempt: 3,
+    },
+  });
+  assert.equal(emitted.length, 1);
+  assert.equal(db.events.length, 1);
+  const payload = JSON.parse(db.events[0].payload_json);
+  assert.equal(payload.observation_origin, 'initial_reconciliation');
+  assert.equal(payload.transition_observed, false);
+  assert.equal(payload.synthetic, false);
+  assert.equal(payload.previous_state, 'absent');
+  assert.equal(payload.current_state, 'down');
+  const session = db.getWorkSession(sessionIdFor(`host:${host}`));
+  assert.equal(session.state, 'open');
+});
+
+test('initial reconciliation creates incident for service already CRITICAL', () => {
+  const db = memoryDb();
+  const adapter = new NagiosAdapter({ db });
+  const host = 'host-192-168-1-239';
+  const svc = 'OM API Health';
+  adapter.applyServicelist({
+    [host]: {
+      [svc]: {
+        status: SVC.CRITICAL,
+        plugin_output: 'HTTP CRITICAL',
+        last_check: Date.now(),
+        scheduled_downtime_depth: 0,
+      },
+    },
+  });
+  assert.equal(db.events.length, 1);
+  const payload = JSON.parse(db.events[0].payload_json);
+  assert.equal(payload.observation_origin, 'initial_reconciliation');
+  assert.equal(payload.event_type, 'service.unhealthy');
+  assert.equal(db.getWorkSession(sessionIdFor(`service:${host}::${svc}`)).state, 'open');
+});
+
+test('adapter restart does not duplicate reconciled incidents', () => {
+  const db = memoryDb();
+  const host = 'host-192-168-1-249';
+  const a1 = new NagiosAdapter({ db });
+  a1.applyHostlist({
+    [host]: { status: HOST.DOWN, plugin_output: 'down', last_check: Date.now() },
+  });
+  assert.equal(db.events.length, 1);
+  const a2 = new NagiosAdapter({ db });
+  const emitted = a2.applyHostlist({
+    [host]: { status: HOST.DOWN, plugin_output: 'down', last_check: Date.now() },
+  });
+  assert.equal(emitted[0].result.inserted, false);
+  assert.equal(db.events.length, 1);
+  assert.equal(db.getWorkSession(sessionIdFor(`host:${host}`)).state, 'open');
+});
+
+test('scheduled downtime suppresses new actionable incident', () => {
+  const db = memoryDb();
+  const adapter = new NagiosAdapter({ db });
+  adapter.cfg = { ...adapter.cfg, nagiosReconcileDowntimeActionable: false };
+  const host = 'host-192-168-1-254';
+  const emitted = adapter.applyHostlist({
+    [host]: {
+      status: HOST.DOWN,
+      plugin_output: 'down in downtime',
+      scheduled_downtime_depth: 1,
+      last_check: Date.now(),
+    },
+  });
+  assert.equal(emitted.length, 0);
+  assert.equal(db.events.length, 0);
+  assert.equal(adapter.reconciliationStats.downtime_suppressed, 1);
+});
+
+test('acknowledgement state is preserved on reconciled incident', () => {
+  const db = memoryDb();
+  const adapter = new NagiosAdapter({ db });
+  const host = 'host-192-168-1-240';
+  adapter.applyHostlist({
+    [host]: {
+      status: HOST.DOWN,
+      plugin_output: 'down',
+      problem_has_been_acknowledged: 1,
+      scheduled_downtime_depth: 0,
+      last_check: Date.now(),
+    },
+  });
+  const session = db.getWorkSession(sessionIdFor(`host:${host}`));
+  const ctx = JSON.parse(session.context_json);
+  assert.equal(ctx.acknowledgement_state, true);
+});
+
+test('canonical inventory mapping attaches hostname for known IP', () => {
+  const db = memoryDb();
+  const adapter = new NagiosAdapter({ db });
+  const host = 'host-192-168-1-254';
+  adapter.applyHostlist({
+    [host]: { status: HOST.DOWN, plugin_output: 'down', last_check: Date.now() },
+  });
+  const payload = JSON.parse(db.events[0].payload_json);
+  assert.equal(payload.resource_identity.mapping_status, 'mapped');
+  assert.equal(payload.resource_identity.canonical_hostname, 'om-dev');
+  assert.equal(payload.resource_identity.ip_address, '192.168.1.254');
+});
+
+test('auth failure reports monitoring unavailable', async () => {
+  const adapterStatus = require('../src/health/adapterStatus');
+  const db = memoryDb();
+  const fetchImpl = async () => ({ ok: false, status: 401, json: async () => ({}) });
+  const adapter = new NagiosAdapter({ db, fetchImpl });
+  adapter.cfg = {
+    ...adapter.cfg,
+    enableNagiosAdapter: true,
+    nagiosStatusjsonUrl: 'http://example.test/statusjson.cgi',
+    nagiosStatusUser: 'ombrain-nagios-ro',
+    nagiosStatusPassword: 'x',
+    nagiosAuthRequired: true,
+    nagiosCheckedFrom: 'ops-nagios',
+    nagiosStaleMs: 180000,
+  };
+  adapterStatus.setEnabled('nagios', true);
+  await adapter.pollOnce();
+  const snap = adapterStatus.snapshot().nagios;
+  assert.equal(snap.meta.freshness, 'monitoring_unavailable');
+  assert.equal(snap.meta.integration_health, 'auth_failed');
+});
+
+test('synthetic fixture services excluded from critical totals', () => {
+  const adapterStatus = require('../src/health/adapterStatus');
+  const db = memoryDb();
+  const adapter = new NagiosAdapter({ db });
+  adapter.cfg = { ...adapter.cfg, nagiosStaleMs: 180000, nagiosCheckedFrom: 'ops' };
+  adapter.applyServicelist({
+    'host-192-168-1-254': {
+      'OMBrain-Fixture': { status: SVC.CRITICAL, plugin_output: 'fixture', last_check: Date.now() },
+      OMBrain: { status: SVC.CRITICAL, plugin_output: 'real', last_check: Date.now() },
+    },
+  });
+  // Force last_ok so freshness computes
+  adapterStatus.recordPoll('nagios', { ok: true, status: 200 });
+  const snap = adapter._publishSnapshot();
+  assert.equal(snap.services_critical, 1);
+  assert.equal(snap.services_synthetic_excluded, 1);
+  const fixturePayload = JSON.parse(db.events.find((e) => JSON.parse(e.payload_json).monitored_service === 'OMBrain-Fixture').payload_json);
+  assert.equal(fixturePayload.synthetic, true);
 });

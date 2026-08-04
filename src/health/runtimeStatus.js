@@ -88,10 +88,30 @@ async function buildRuntimeStatus(deps = {}) {
     hosts_total: nagiosMeta?.hosts_total ?? null,
     hosts_down: nagiosMeta?.hosts_down ?? null,
     services_total: nagiosMeta?.services_total ?? null,
+    // Active problem totals exclude synthetic fixture services.
     services_critical: nagiosMeta?.services_critical ?? null,
     services_warning: nagiosMeta?.services_warning ?? null,
     services_unknown: nagiosMeta?.services_unknown ?? null,
+    services_synthetic_excluded: nagiosMeta?.services_synthetic_excluded ?? null,
     last_event_at: nagiosMeta?.last_event_at ?? null,
+    reconciliation: nagiosMeta?.reconciliation || null,
+    mapping: nagiosMeta?.mapping || null,
+    authentication: nagiosMeta?.authentication || {
+      method: config.ingest?.nagiosAuthRequired ? 'basic_required' : 'none',
+      configured: Boolean(config.ingest?.nagiosStatusUser),
+      last_result: 'unknown',
+    },
+    notification: nagiosMeta?.notification ||
+      config.ingest?.nagiosNotificationStatus || {
+        status: 'unverified',
+        last_tested_at: null,
+      },
+    active_problems: {
+      hosts_down: nagiosMeta?.hosts_down ?? null,
+      services_critical: nagiosMeta?.services_critical ?? null,
+      services_warning: nagiosMeta?.services_warning ?? null,
+      synthetic_excluded: nagiosMeta?.services_synthetic_excluded ?? null,
+    },
   };
   // Never present missing monitoring as healthy.
   if (
@@ -100,7 +120,9 @@ async function buildRuntimeStatus(deps = {}) {
       nagiosMonitoring.freshness === 'stale' ||
       nagiosMonitoring.freshness === 'monitoring_unavailable' ||
       nagiosMonitoring.adapter_state === 'error' ||
-      nagiosMonitoring.adapter_state === 'disabled')
+      nagiosMonitoring.adapter_state === 'auth_error' ||
+      nagiosMonitoring.adapter_state === 'disabled' ||
+      nagiosMonitoring.integration_health === 'auth_failed')
   ) {
     if (nagiosMonitoring.integration_health === 'ok') {
       nagiosMonitoring.integration_health = nagiosMonitoring.freshness || 'unknown';

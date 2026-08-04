@@ -111,6 +111,24 @@ const config = Object.freeze({
     nagiosCheckedFrom: env.BRAIN_NAGIOS_CHECKED_FROM || 'ops-nagios',
     // After this age without a successful poll, /status reports freshness=stale.
     nagiosStaleMs: num(env.BRAIN_NAGIOS_STALE_MS, 180000),
+    // Basic-auth credentials for statusjson (password via file preferred).
+    nagiosStatusUser: env.BRAIN_NAGIOS_STATUS_USER || '',
+    nagiosStatusPassword: env.BRAIN_NAGIOS_STATUS_PASSWORD || '',
+    nagiosStatusPasswordFile:
+      env.BRAIN_NAGIOS_STATUS_PASSWORD_FILE || '/etc/om-brain/nagios-status.password',
+    // When true, missing/failed auth is treated as monitoring unavailable (fail closed).
+    nagiosAuthRequired: bool(env.BRAIN_NAGIOS_AUTH_REQUIRED, false),
+    // When false (default), scheduled downtime suppresses new actionable incidents.
+    nagiosReconcileDowntimeActionable: bool(
+      env.BRAIN_NAGIOS_RECONCILE_DOWNTIME_ACTIONABLE,
+      false,
+    ),
+    // Operator-updated notification delivery status (never invent success).
+    nagiosNotificationStatus: {
+      status: env.BRAIN_NAGIOS_NOTIFICATION_STATUS || 'unverified',
+      last_tested_at: env.BRAIN_NAGIOS_NOTIFICATION_LAST_TESTED_AT || null,
+      detail: env.BRAIN_NAGIOS_NOTIFICATION_DETAIL || null,
+    },
     // Drop misleading platform_inventory host/health events when Nagios is SoT.
     suppressInventoryHealthEvents: bool(env.BRAIN_SUPPRESS_INVENTORY_HEALTH_EVENTS, true),
     // Shared secret for POST /brain/ingest/event (falls back to OMSTUDIO_WEBHOOK_SECRET).
