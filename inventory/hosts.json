@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "domain": "om.internal",
-  "updated": "2026-07-04",
+  "updated": "2026-08-05",
   "notes": "Declared source of truth for om.internal hosts. Regenerate HOST-SNAPSHOT.md via collect-hosts.js. Aliases include OMAI platform-inventory ids/hostnames and service keys for target-identity resolution.",
   "hosts": [
     {
@@ -223,6 +223,19 @@
         139
       ],
       "notes": "QNAP Samba/CIFS (no NFS); share //192.168.1.79/OM-backups; backups under /backups on .239. Alias backup-nfs is legacy naming only."
+    },
+    {
+      "name": "fileserver01",
+      "ip": "192.168.1.232",
+      "aliases": [
+        "fileserver01.om.internal"
+      ],
+      "role": "Shared planning filesystem (CIFS/SMB)",
+      "environment": "infrastructure",
+      "key_ports": [
+        445
+      ],
+      "notes": "CIFS share //192.168.1.232/plans mounted on om-dev at /mnt/fileserver01/plans. Not NFS (TCP 2049 refused). Distinct from om-sh1 backup QNAP."
     },
     {
       "name": "ops",

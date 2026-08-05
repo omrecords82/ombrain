@@ -103,8 +103,14 @@ async function buildRuntimeStatus(deps = {}) {
     },
     notification: nagiosMeta?.notification ||
       config.ingest?.nagiosNotificationStatus || {
+        command_execution: 'unverified',
+        local_sink: 'unverified',
+        external_transport: 'unconfigured',
+        operator_receipt: 'unverified',
+        overall_status: 'unverified',
         status: 'unverified',
         last_tested_at: null,
+        test_reference: null,
       },
     active_problems: {
       hosts_down: nagiosMeta?.hosts_down ?? null,

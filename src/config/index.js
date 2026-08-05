@@ -123,12 +123,9 @@ const config = Object.freeze({
       env.BRAIN_NAGIOS_RECONCILE_DOWNTIME_ACTIONABLE,
       false,
     ),
-    // Operator-updated notification delivery status (never invent success).
-    nagiosNotificationStatus: {
-      status: env.BRAIN_NAGIOS_NOTIFICATION_STATUS || 'unverified',
-      last_tested_at: env.BRAIN_NAGIOS_NOTIFICATION_LAST_TESTED_AT || null,
-      detail: env.BRAIN_NAGIOS_NOTIFICATION_DETAIL || null,
-    },
+    // Evidence-based notification delivery status (never invent success).
+    // See src/health/notificationStatus.js — local sink ≠ operator receipt.
+    nagiosNotificationStatus: require('../health/notificationStatus').buildNotificationStatus(env),
     // Drop misleading platform_inventory host/health events when Nagios is SoT.
     suppressInventoryHealthEvents: bool(env.BRAIN_SUPPRESS_INVENTORY_HEALTH_EVENTS, true),
     // Shared secret for POST /brain/ingest/event (falls back to OMSTUDIO_WEBHOOK_SECRET).

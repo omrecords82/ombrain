@@ -59,22 +59,55 @@ Objects/services whose names contain `fixture` / `OMBrain-Fixture` are marked `s
 
 ## Notification delivery status
 
-`/status.nagios_monitoring.notification.status` is one of `unverified|verified|degraded|failed`. Update via env after a controlled test:
+`/status.nagios_monitoring.notification` exposes evidence dimensions (never invent success):
+
+| Field | Meaning |
+|---|---|
+| `command_execution` | Nagios decided to notify and ran the notification command |
+| `local_sink` | Local audit receipt log accepted the event |
+| `external_transport` | SMTP/msmtp (or other transport) accepted the message |
+| `operator_receipt` | An operational human/system recipient confirmed receipt |
+| `overall_status` | Aggregate readiness (`status` is a backward-compatible alias) |
+| `last_tested_at` | ISO timestamp of the last controlled test |
+| `test_reference` | Marker correlating the test (e.g. `OMBRAIN-SMTP-…`) |
+
+Allowed values: `verified|degraded|failed|unconfigured|unverified`.
+
+**Overall `verified` requires `operator_receipt=verified` and `external_transport=verified`.**  
+Local receipt-log success alone is **`degraded`**, never `verified`.
 
 ```bash
-BRAIN_NAGIOS_NOTIFICATION_STATUS=verified
+BRAIN_NAGIOS_NOTIFICATION_COMMAND_EXECUTION=verified
+BRAIN_NAGIOS_NOTIFICATION_LOCAL_SINK=verified
+BRAIN_NAGIOS_NOTIFICATION_EXTERNAL_TRANSPORT=verified
+BRAIN_NAGIOS_NOTIFICATION_OPERATOR_RECEIPT=unverified   # set verified only after inbox confirmation
 BRAIN_NAGIOS_NOTIFICATION_LAST_TESTED_AT=...
+BRAIN_NAGIOS_NOTIFICATION_TEST_REFERENCE=OMBRAIN-...
 BRAIN_NAGIOS_NOTIFICATION_DETAIL='...'
+# Deprecated: BRAIN_NAGIOS_NOTIFICATION_STATUS — if set to verified without granular
+# fields, OMBrain treats it as local-path success and clamps overall to degraded.
 ```
 
 Do not treat configured contacts alone as proof of delivery.
 
-### Ops notification path (verified 2026-08-04)
+### Ops notification path
 
-- Contact `nagiosadmin` uses `notify-*-by-receipt` → `/var/log/nagios4/notification-receipt.log` (local sink). Email/`msmtp` remains unconfigured (`account default not found`) — restore SMTP separately before relying on mail.
+- Local audit sink: `notify-*-by-receipt` → `/var/log/nagios4/notification-receipt.log`.
+- External transport: `msmtp` system account (`/etc/msmtprc`) when mail notify commands are enabled; transport acceptance ≠ operator receipt.
 - `cmd.cgi` requires Digest auth (`nagiosadmin` in `/etc/nagios4/htdigest.users`; password file `/etc/nagios4/cmd-cgi.password`). CSRF stays fail-closed: GET form for `NagFormId` cookie + POST `nagFormId`.
 - CGI `use_authentication=1` with `default_user_name=guest` (read-only). `ombrain-nagios-ro` is authorized for host/service reads so statusjson keeps working.
 - Safe tests: `SEND_CUSTOM_SVC_NOTIFICATION` via `nagios.cmd`, or authenticated CSRF `cmd.cgi` custom notification.
+
+### cmd.cgi security boundary
+
+| Control | Expected state |
+|---|---|
+| Authentication | Digest `Require valid-user` on `cmd.cgi` |
+| CSRF | `cgi_cookie_fail_open=0` (fail-closed) |
+| Encryption | HTTP on LAN `:8080` — Digest over cleartext LAN; restrict to private networks or add TLS |
+| Network | Apache `Require ip` private ranges for CGI UI |
+| Password files | `htdigest.users` / `cmd-cgi.password` mode `640` root:www-data |
+| Public exposure | Must remain non-public (no Internet publish) |
 
 ## Host naming
 
@@ -93,11 +126,12 @@ Service definitions for MariaDB TCP, Keycloak HTTP, FreeIPA HTTPS, Samba/CIFS TC
 Validate with `sudo /usr/sbin/nagios4 -v /etc/nagios4/nagios.cfg` then `sudo systemctl reload nagios4`.
 
 Notes:
-- MariaDB (`om-dbp01` / `.241`) uses authenticated `check_mysql` via ops-private `/etc/nagios4/mysql-monitor.cnf` (user `nagios_monitor@192.168.1.40`, USAGE+PROCESS). Do not commit the password; `$USER3$`/`$USER4$` also hold the same identity in `resource.cfg` (mode `640` root:nagios).
-- om-sh1 (`.79`) is Samba/CIFS only (no NFS). Coverage checks TCP `:445` and `:139`; there is no `:2049` NFS check. Notifications enabled when Samba ports are healthy from ops.
+- MariaDB (`om-dbp01` / `.241`) uses authenticated `check_mysql` via ops-private `/etc/nagios4/mysql-monitor.cnf` (user `nagios_monitor@192.168.1.40`). Prefer minimum privileges (USAGE-equivalent connect; retain `PROCESS` only if the plugin requires it). Do not commit the password; `$USER3$`/`$USER4$` also hold the same identity in `resource.cfg` (mode `640` root:nagios).
+- om-sh1 (`.79`) is the backup QNAP (Samba/CIFS only; no NFS). Coverage checks TCP `:445` and `:139`.
+- fileserver01 (`.232`) hosts the shared **plans** CIFS share. Server-side: TCP `:445` + authenticated `check-plans-smb.sh` (creds in `/etc/nagios4/smb-plans.cred`). Client-side: om-dev `Plans CIFS Mount` via constrained SSH resource check. NFS `:2049` is not a plans dependency (connection refused).
+- om-dev host resources use `deploy/nagios/objects/omdev-resources.cfg` + ForceCommand SSH (`id_omdev_checks`). Allowlisted checks only — not fleet-wide in this batch.
 - Webhook `/health` allowlists ops `.40` (plus localhost and OMStudio `.242`).
-- NRPE disk checks are not enabled (`check_nrpe` not installed on ops).
-- `check_disk_smb` exists on ops but needs share credentials; not enabled (prefer TCP probes).
+- NRPE is not required for the om-dev constrained pattern.
 
 ## Misleading path (retired)
 

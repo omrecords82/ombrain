@@ -652,8 +652,14 @@ class NagiosAdapter {
         // never include secrets
       },
       notification: this.cfg.nagiosNotificationStatus || {
+        command_execution: 'unverified',
+        local_sink: 'unverified',
+        external_transport: 'unconfigured',
+        operator_receipt: 'unverified',
+        overall_status: 'unverified',
         status: 'unverified',
         last_tested_at: null,
+        test_reference: null,
       },
     };
     adapterStatus.recordMeta('nagios', this.lastSnapshot);
