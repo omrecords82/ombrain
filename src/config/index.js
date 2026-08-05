@@ -124,8 +124,13 @@ const config = Object.freeze({
       false,
     ),
     // Evidence-based notification delivery status (never invent success).
-    // See src/health/notificationStatus.js — local sink ≠ operator receipt.
-    nagiosNotificationStatus: require('../health/notificationStatus').buildNotificationStatus(env),
+    // Prefer durable evidence file when present; see notificationEvidence.js.
+    // Local sink ≠ operator receipt.
+    nagiosNotificationStatus: require('../health/notificationEvidence').buildNotificationStatusFromEvidence(
+      env,
+      env.BRAIN_NAGIOS_NOTIFICATION_EVIDENCE_PATH ||
+        '/var/lib/om-brain/notification-evidence.json',
+    ),
     // Drop misleading platform_inventory host/health events when Nagios is SoT.
     suppressInventoryHealthEvents: bool(env.BRAIN_SUPPRESS_INVENTORY_HEALTH_EVENTS, true),
     // Shared secret for POST /brain/ingest/event (falls back to OMSTUDIO_WEBHOOK_SECRET).

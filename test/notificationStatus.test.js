@@ -48,6 +48,14 @@ test('external transport failure produces degraded or failed', () => {
   });
   assert.equal(failed, 'failed');
 
+  const receiptFailed = deriveOverallStatus({
+    command_execution: 'verified',
+    local_sink: 'verified',
+    external_transport: 'verified',
+    operator_receipt: 'failed',
+  });
+  assert.equal(receiptFailed, 'degraded');
+
   const unconfigured = buildNotificationStatus({
     BRAIN_NAGIOS_NOTIFICATION_COMMAND_EXECUTION: 'verified',
     BRAIN_NAGIOS_NOTIFICATION_LOCAL_SINK: 'verified',

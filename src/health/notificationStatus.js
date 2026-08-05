@@ -30,8 +30,13 @@ function deriveOverallStatus(parts) {
   const transport = normalizeState(parts.external_transport, 'unconfigured');
   const receipt = normalizeState(parts.operator_receipt);
 
-  if ([command, local, transport, receipt].includes('failed')) {
+  // Command / sink / transport hard failures → overall failed.
+  // Operator receipt failure stays degraded (delivery path may work; inbox unconfirmed).
+  if ([command, local, transport].includes('failed')) {
     return 'failed';
+  }
+  if (receipt === 'failed') {
+    return 'degraded';
   }
   if (receipt === 'verified' && transport === 'verified' && command === 'verified') {
     return 'verified';

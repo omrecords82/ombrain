@@ -12,6 +12,7 @@ const {
 } = require('../ingest/opsAuth');
 const { resolveFleetTransport } = require('../fleet/natsClient');
 const breaker = require('../ai/circuitBreaker');
+const { buildDeploymentVersionReport } = require('./deploymentVersion');
 
 async function probeNats() {
   const url = process.env.NATS_URL || '';
@@ -137,12 +138,14 @@ async function buildRuntimeStatus(deps = {}) {
 
   const nats = await probeNats();
   const pkg = require('../../package.json');
+  const deployment = buildDeploymentVersionReport();
 
   return {
     ok: true,
     service: 'om-brain',
     state: 'running',
     version: pkg.version || null,
+    deployment,
     node_env: config.nodeEnv,
     uptime_sec: adapterStatus.uptimeSec(),
     hostname: os.hostname(),
