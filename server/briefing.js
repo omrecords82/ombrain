@@ -253,15 +253,19 @@ function buildOperatorActions(byKey, healthVerdict, eventClusters) {
         safe_to_act: true,
       });
     }
-    const nStatus = String(nagios.notification?.status || 'unverified');
-    if (nStatus === 'failed' || nStatus === 'degraded' || nStatus === 'unverified') {
+    const n = nagios.notification || {};
+    const nStatus = String(n.overall_status || n.status || 'unverified');
+    if (nStatus === 'failed' || nStatus === 'degraded' || nStatus === 'unverified' || nStatus === 'unconfigured') {
+      const receipt = n.operator_receipt || 'unverified';
+      const transport = n.external_transport || 'unconfigured';
       actions.push({
         id: 'nagios-notification-status',
         severity: nStatus === 'failed' ? 'warning' : 'info',
         title: `Nagios notification delivery is ${nStatus}`,
-        explanation: nagios.notification?.detail ||
-          'Configured contacts are not proof of delivery. Complete a controlled end-to-end notification test on ops.',
-        recommended_action: 'Run a controlled custom notification on ops and update BRAIN_NAGIOS_NOTIFICATION_STATUS.',
+        explanation: n.detail ||
+          `Local sink success is not operator delivery. transport=${transport}; operator_receipt=${receipt}.`,
+        recommended_action:
+          'Confirm operator inbox receipt of a controlled Nagios alert, then set BRAIN_NAGIOS_NOTIFICATION_OPERATOR_RECEIPT=verified (overall remains degraded until then).',
         button_label: 'Open diagnostics',
         navigate_to: 'diagnostics',
         safe_to_act: true,
