@@ -53,6 +53,14 @@ Right: `git checkout vX.Y.Z` then run the install/sync for that tag.
 `v1.0.0` is the extract from OMAI `origin/main` (`d1c9edc`, last om-brain
 commit `e45ad64`). See `EXTRACT.md`.
 
+## omdev runtime restart
+
+`/var/lib/om-brain/brain.db` is multi-GB. Do **not** run `scripts/init-db.js`
+as `ExecStartPre` on `.254`. Install `deploy/skip-init-db.conf` as
+`/etc/systemd/system/om-brain.service.d/skip-init-db.conf`. Use
+`deploy/sync-runtime-on-dev.sh --no-restart` when you only need to refresh
+files.
+
 ## GitHub Actions
 
 The inherited CI/deploy workflow lives at `deploy/ci-deploy.workflow.yml`.

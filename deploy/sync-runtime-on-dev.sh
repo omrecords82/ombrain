@@ -4,9 +4,23 @@
 # Does not overwrite /etc/om-brain env files or /var/lib/om-brain state.
 #
 # Usage (on omdev, as root):
-#   sudo /var/www/ombrain/deploy/sync-runtime-on-dev.sh [git-ref]
+#   sudo /var/www/ombrain/deploy/sync-runtime-on-dev.sh [--no-restart] [git-ref]
+#
+# Do not run scripts/init-db.js against the live /var/lib/om-brain database.
+# That file is multi-GB; a restart ExecStartPre hung and took the service down
+# during the v1.0.0 baseline. omdev uses
+# /etc/systemd/system/om-brain.service.d/skip-init-db.conf (see deploy/).
 #
 set -euo pipefail
+
+RESTART=1
+REF=""
+for arg in "$@"; do
+  case "${arg}" in
+    --no-restart) RESTART=0 ;;
+    *) REF="${arg}" ;;
+  esac
+done
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "[sync] ERROR: must run as root (sudo)." >&2
@@ -17,7 +31,6 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="/opt/om-brain"
 CONSOLE_DIR="/opt/om-brain-console"
 BACKUP_ROOT="/var/backups/om-brain"
-REF="${1:-}"
 
 if [[ ! -d "${SRC_DIR}/.git" ]]; then
   echo "[sync] ERROR: ${SRC_DIR} is not a git checkout." >&2
@@ -75,14 +88,18 @@ if [[ -d "${SRC_DIR}/om-brain-console" ]]; then
     echo "[sync] WARNING: console npm install reported issues"
 fi
 
-systemctl daemon-reload
-systemctl restart om-brain.service
-if systemctl list-unit-files om-brain-console.service >/dev/null 2>&1; then
-  systemctl restart om-brain-console.service
+if [[ "${RESTART}" -eq 1 ]]; then
+  systemctl daemon-reload
+  echo "[sync] restarting om-brain (init-db ExecStartPre must stay disabled on this host)"
+  systemctl restart om-brain.service
+  if systemctl list-unit-files om-brain-console.service >/dev/null 2>&1; then
+    systemctl restart om-brain-console.service
+  fi
+  sleep 2
+  systemctl is-active om-brain.service
+  systemctl is-active om-brain-console.service || true
+else
+  echo "[sync] skipped service restart (--no-restart)"
 fi
-
-sleep 2
-systemctl is-active om-brain.service
-systemctl is-active om-brain-console.service || true
 echo "[sync] done. version=${VERSION} sha=${GIT_SHA}"
 echo "[sync] health: curl -sS http://127.0.0.1:8390/health"
