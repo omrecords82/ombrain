@@ -52,3 +52,10 @@ Right: `git checkout vX.Y.Z` then run the install/sync for that tag.
 
 `v1.0.0` is the extract from OMAI `origin/main` (`d1c9edc`, last om-brain
 commit `e45ad64`). See `EXTRACT.md`.
+
+## GitHub Actions
+
+The inherited CI/deploy workflow lives at `deploy/ci-deploy.workflow.yml`.
+It is not installed under `.github/workflows/` on this first push because
+the available GitHub token lacks the `workflow` scope. Restore it when a
+credential with that scope is available; do not auto-deploy from `.254`.
