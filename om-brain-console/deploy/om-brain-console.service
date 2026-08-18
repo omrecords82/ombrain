@@ -1,0 +1,26 @@
+[Unit]
+Description=OMBrain Command Console (local proxy + operator UI)
+Documentation=file:/opt/om-brain-console/README.md
+After=network-online.target om-brain.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=next
+Group=next
+WorkingDirectory=/opt/om-brain-console
+EnvironmentFile=/etc/om-brain/console.env
+# Operator locale: Eastern Time (EST/EDT via America/New_York).
+Environment=TZ=America/New_York
+ExecStart=/usr/bin/node /opt/om-brain-console/server/index.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening — console is LAN-only via nginx; binds loopback
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
