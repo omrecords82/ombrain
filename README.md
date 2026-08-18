@@ -1,5 +1,11 @@
 # OrthodoxMetrics Brain — Phase 1 External Substrate
 
+> **Source of truth:** this repository (`omrecords82/ombrain`).
+> **Dev host:** omdev `192.168.1.254` at `/var/www/ombrain`.
+> **Releases:** version tags (`vX.Y.Z`) — see `SDLC.md`. Do not promote a
+> dirty `.254` tree to production. OMAI copies of this tree are parked.
+
+
 > **Posture (OM-DOCTRINE-0001, Phase 1):** *auditor first, planner second,
 > operator last.* The Brain **observes, analyzes, explains, and recommends.**
 > It **never self-authorizes** and **never executes** governed or never-auto
